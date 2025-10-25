@@ -62,6 +62,21 @@ class TaskMonitorApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
         useMaterial3: true,
+        tooltipTheme: TooltipThemeData(
+          waitDuration: const Duration(milliseconds: 300),
+          showDuration: const Duration(seconds: 3),
+          preferBelow: false,
+          verticalOffset: 32,
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.85),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          textStyle: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ),
       home: const FocusBar(),
     );
