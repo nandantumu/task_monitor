@@ -90,11 +90,13 @@ class _FocusBarState extends State<FocusBar> {
   bool _isPaused = false;
   bool _isFlashing = false;
   bool _flashOn = false;
+  bool _isAlwaysOnTop = true;
 
   @override
   void initState() {
     super.initState();
     _startCountdown();
+    _loadAlwaysOnTopState();
   }
 
   @override
@@ -128,7 +130,7 @@ class _FocusBarState extends State<FocusBar> {
 
       if (finishedTick) {
         _countdownTimer?.cancel();
-        _onTimerComplete();
+        unawaited(_onTimerComplete());
       }
 
       if (!_isPaused && !_isFlashing) {
@@ -137,16 +139,21 @@ class _FocusBarState extends State<FocusBar> {
     });
   }
 
-  void _onTimerComplete() {
+  Future<void> _onTimerComplete() async {
     if (!mounted || _isFlashing) {
       return;
     }
 
     _flashTimer?.cancel();
+    await windowManager.setAlwaysOnTop(true);
+    if (!mounted) {
+      return;
+    }
     setState(() {
       _isPaused = false;
       _isFlashing = true;
       _flashOn = false;
+      _isAlwaysOnTop = true;
     });
     _flashTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
       if (!mounted) {
@@ -205,6 +212,27 @@ class _FocusBarState extends State<FocusBar> {
     } else {
       _pauseTimer();
     }
+  }
+
+  Future<void> _loadAlwaysOnTopState() async {
+    final value = await windowManager.isAlwaysOnTop();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isAlwaysOnTop = value;
+    });
+  }
+
+  Future<void> _toggleAlwaysOnTop() async {
+    final newValue = !_isAlwaysOnTop;
+    await windowManager.setAlwaysOnTop(newValue);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _isAlwaysOnTop = newValue;
+    });
   }
 
   static String _formatDuration(Duration duration) {
@@ -341,6 +369,18 @@ class _FocusBarState extends State<FocusBar> {
                     ),
                     color: Colors.black,
                     onPressed: _handleControlTap,
+                  ),
+                  IconButton(
+                    tooltip: _isAlwaysOnTop
+                        ? 'Disable always-on-top'
+                        : 'Enable always-on-top',
+                    icon: Icon(
+                      _isAlwaysOnTop
+                          ? Icons.arrow_circle_up
+                          : Icons.arrow_circle_down,
+                    ),
+                    color: Colors.black,
+                    onPressed: _toggleAlwaysOnTop,
                   ),
                 ],
               ),
