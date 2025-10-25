@@ -1,3 +1,7 @@
+<div align="center">
+<img src="https://raw.githubusercontent.com/nandantumu/task_monitor/refs/heads/main/icon_design/task_monitor_icon_1024x1024.png" alt="logo" style="width: 30%; height: auto;"></img>
+</div>
+
 # Task Monitor
 Task Monitor keeps a thin yellow bar docked at the top of your desktop so you can see your current focus and a Pomodoro-style countdown at a glance. It is intentionally minimal (well under 500 lines of Dart) and targets macOS, Windows, and Linux desktop builds.
 
