@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
-const double _focusBarHeight = 64;
+const double _focusBarHeight = 50;
 const Duration _sessionDuration = Duration(minutes: 25);
 const Color _barColor = Color(0xFFFFB000);
 const Color _flashColor = Color(0xFFFF4D4F);
@@ -30,6 +30,7 @@ Future<void> _configureDesktopWindow() async {
     backgroundColor: Colors.transparent,
     skipTaskbar: false,
     titleBarStyle: TitleBarStyle.hidden,
+    alwaysOnTop: true,
   );
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -37,6 +38,7 @@ Future<void> _configureDesktopWindow() async {
     await windowManager.setResizable(false);
     await windowManager.setMaximizable(false);
     await windowManager.setMinimizable(false);
+    await windowManager.setAlwaysOnTop(true);
 
     final display = await ScreenRetriever.instance.getPrimaryDisplay();
     final width = display.size.width;
@@ -76,7 +78,7 @@ class FocusBar extends StatefulWidget {
 class _FocusBarState extends State<FocusBar> {
   static const _tick = Duration(seconds: 1);
   final TextEditingController _focusController = TextEditingController(
-    text: 'Fix the message timing bug in the CSPE library.',
+    text: 'What are you focusing on?',
   );
   final TextEditingController _timerController =
       TextEditingController(text: _formatDuration(_sessionDuration));
@@ -262,7 +264,7 @@ class _FocusBarState extends State<FocusBar> {
             height: _focusBarHeight,
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
               color: backgroundColor,
               child: Row(
                 children: [

@@ -1,5 +1,5 @@
 name: task_monitor
-description: "A new Flutter project."
+description: "An obnoxious taskbar to remind you to stay focused."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   window_manager: ^0.5.1
   screen_retriever: ^0.2.0
+  flutter_launcher_icons: ^0.14.4
 
 dev_dependencies:
   flutter_test:
@@ -60,8 +61,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
+  assets:
+    - icon_design/task_monitor_icon_1024x1024.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
@@ -89,3 +90,14 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: false
+  ios: false
+  macos:
+    generate: true
+  linux:
+    generate: true
+  web:
+    generate: true
+  image_path: "icon_design/task_monitor_icon_1024x1024.png"
