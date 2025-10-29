@@ -41,7 +41,7 @@ Future<void> _configureDesktopWindow() async {
     await windowManager.setAlwaysOnTop(true);
 
     final display = await ScreenRetriever.instance.getPrimaryDisplay();
-    final width = display.size.width;
+    final width = display.visibleSize?.width ?? display.size.width;
     final topLeft = display.visiblePosition ?? Offset.zero;
 
     await windowManager.setSize(Size(width, _focusBarHeight));
@@ -299,106 +299,104 @@ class _FocusBarState extends State<FocusBar> {
   Widget build(BuildContext context) {
     final backgroundColor = _isFlashing && _flashOn ? _flashColor : _barColor;
     return Scaffold(
-      backgroundColor: Colors.black87,
-      body: SafeArea(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: SizedBox(
-            height: _focusBarHeight,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-              color: backgroundColor,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _focusController,
-                      style: const TextStyle(
+      backgroundColor: Colors.transparent,
+      body: Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(
+          height: _focusBarHeight,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+            color: backgroundColor,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _focusController,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      prefixText: 'Current Focus: ',
+                      prefixStyle: TextStyle(
                         fontSize: 24,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        prefixText: 'Current Focus: ',
-                        prefixStyle: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  GestureDetector(
-                    onTap: _handleTimerTap,
-                    behavior: HitTestBehavior.translucent,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      child: _isPaused
-                          ? SizedBox(
-                              key: const ValueKey('timer-editor'),
-                              width: 110,
-                              child: TextField(
-                                controller: _timerController,
-                                focusNode: _timerFocusNode,
-                                textAlign: TextAlign.right,
-                                keyboardType: TextInputType.number,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.allow(
-                                    RegExp(r'[0-9:]'),
-                                  ),
-                                ],
-                                style: const TextStyle(
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
+                ),
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: _handleTimerTap,
+                  behavior: HitTestBehavior.translucent,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: _isPaused
+                        ? SizedBox(
+                            key: const ValueKey('timer-editor'),
+                            width: 110,
+                            child: TextField(
+                              controller: _timerController,
+                              focusNode: _timerFocusNode,
+                              textAlign: TextAlign.right,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.allow(
+                                  RegExp(r'[0-9:]'),
                                 ),
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: InputBorder.none,
-                                ),
-                              ),
-                            )
-                          : Text(
-                              key: const ValueKey('timer-display'),
-                              _formatDuration(_remaining),
+                              ],
                               style: const TextStyle(
                                 fontSize: 28,
                                 fontWeight: FontWeight.bold,
                               ),
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: InputBorder.none,
+                              ),
                             ),
-                    ),
+                          )
+                        : Text(
+                            key: const ValueKey('timer-display'),
+                            _formatDuration(_remaining),
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                   ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: _isFlashing || _remaining == Duration.zero
-                        ? 'Restart focus session'
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: _isFlashing || _remaining == Duration.zero
+                      ? 'Restart focus session'
+                      : _isPaused
+                          ? 'Start timer'
+                          : 'Pause timer',
+                  icon: Icon(
+                    _isFlashing || _remaining == Duration.zero
+                        ? Icons.refresh
                         : _isPaused
-                            ? 'Start timer'
-                            : 'Pause timer',
-                    icon: Icon(
-                      _isFlashing || _remaining == Duration.zero
-                          ? Icons.refresh
-                          : _isPaused
-                              ? Icons.play_arrow
-                              : Icons.pause,
-                    ),
-                    color: Colors.black,
-                    onPressed: _handleControlTap,
+                            ? Icons.play_arrow
+                            : Icons.pause,
                   ),
-                  IconButton(
-                    tooltip: _isAlwaysOnTop
-                        ? 'Disable always-on-top'
-                        : 'Enable always-on-top',
-                    icon: Icon(
-                      _isAlwaysOnTop
-                          ? Icons.arrow_circle_up
-                          : Icons.arrow_circle_down,
-                    ),
-                    color: Colors.black,
-                    onPressed: _toggleAlwaysOnTop,
+                  color: Colors.black,
+                  onPressed: _handleControlTap,
+                ),
+                IconButton(
+                  tooltip: _isAlwaysOnTop
+                      ? 'Disable always-on-top'
+                      : 'Enable always-on-top',
+                  icon: Icon(
+                    _isAlwaysOnTop
+                        ? Icons.arrow_circle_up
+                        : Icons.arrow_circle_down,
                   ),
-                ],
-              ),
+                  color: Colors.black,
+                  onPressed: _toggleAlwaysOnTop,
+                ),
+              ],
             ),
           ),
         ),
