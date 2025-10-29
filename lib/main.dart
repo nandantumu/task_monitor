@@ -107,11 +107,13 @@ class _FocusBarState extends State<FocusBar> {
   bool _isFlashing = false;
   bool _flashOn = false;
   bool _isAlwaysOnTop = true;
+  bool _attachTop = true;
 
   final SystemTray _systemTray = SystemTray();
   final Menu _trayMenu = Menu();
   MenuItemLabel? _trayTimerItem;
   MenuItemLabel? _trayFocusItem;
+  MenuItemLabel? _trayAttachItem;
   bool _systemTrayReady = false;
 
   @override
@@ -121,6 +123,7 @@ class _FocusBarState extends State<FocusBar> {
     _startCountdown();
     _loadAlwaysOnTopState();
     unawaited(_initializeSystemTray());
+    unawaited(_updateWindowPosition());
   }
 
   @override
@@ -296,10 +299,15 @@ class _FocusBarState extends State<FocusBar> {
         enabled: false,
         name: 'focus',
       );
+      _trayAttachItem = MenuItemLabel(
+        label: _buildTrayAttachLabel(),
+        onClicked: (_) => _toggleAttachPosition(),
+      );
 
       final menuItems = <MenuItemBase>[
         _trayTimerItem!,
         _trayFocusItem!,
+        _trayAttachItem!,
         MenuSeparator(),
         MenuItemLabel(
           label: 'Show',
@@ -332,6 +340,7 @@ class _FocusBarState extends State<FocusBar> {
       });
 
       _systemTrayReady = true;
+      await _updateWindowPosition();
       await _updateSystemTrayContent();
     } catch (error) {
       if (kDebugMode) {
@@ -354,9 +363,39 @@ class _FocusBarState extends State<FocusBar> {
     if (_trayFocusItem != null) {
       await _trayFocusItem!.setLabel(_buildTrayFocusLabel());
     }
+    if (_trayAttachItem != null) {
+      await _trayAttachItem!.setLabel(_buildTrayAttachLabel());
+    }
   }
 
   String _buildTrayTimerLabel() => 'Timer: ${_formatDuration(_remaining)}';
+
+  String _buildTrayAttachLabel() =>
+      _attachTop ? 'Attach to bottom' : 'Attach to top';
+
+  Future<void> _toggleAttachPosition() async {
+    _attachTop = !_attachTop;
+    await _updateWindowPosition();
+    unawaited(_updateSystemTrayContent());
+  }
+
+  Future<void> _updateWindowPosition() async {
+    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return;
+    }
+
+    final display = await ScreenRetriever.instance.getPrimaryDisplay();
+    final width = display.visibleSize?.width ?? display.size.width;
+    final visiblePosition = display.visiblePosition ?? Offset.zero;
+    final visibleHeight = display.visibleSize?.height ?? display.size.height;
+
+    final targetTop = _attachTop
+        ? visiblePosition.dy
+        : visiblePosition.dy + visibleHeight - _focusBarHeight;
+
+    await windowManager.setSize(Size(width, _focusBarHeight));
+    await windowManager.setPosition(Offset(visiblePosition.dx, targetTop));
+  }
 
   String _buildTrayFocusLabel() {
     final focus = _focusController.text.trim();
