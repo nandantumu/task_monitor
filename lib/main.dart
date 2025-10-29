@@ -42,11 +42,18 @@ Future<void> _configureDesktopWindow() async {
     await windowManager.setAlwaysOnTop(true);
 
     final display = await ScreenRetriever.instance.getPrimaryDisplay();
+    final offset = display.visiblePosition ?? Offset.zero;
     final width = display.visibleSize?.width ?? display.size.width;
-    final topLeft = display.visiblePosition ?? Offset.zero;
+    final rect = Rect.fromLTWH(
+      offset.dx,
+      offset.dy,
+      width,
+      _focusBarHeight,
+    );
 
-    await windowManager.setSize(Size(width, _focusBarHeight));
-    await windowManager.setPosition(topLeft);
+    await windowManager.setBounds(rect);
+    await windowManager.setMinimumSize(Size(width, _focusBarHeight));
+    await windowManager.setMaximumSize(Size(width, _focusBarHeight));
     await windowManager.show();
     await windowManager.focus();
   });
@@ -384,17 +391,29 @@ class _FocusBarState extends State<FocusBar> {
       return;
     }
 
-    final display = await ScreenRetriever.instance.getPrimaryDisplay();
-    final width = display.visibleSize?.width ?? display.size.width;
-    final visiblePosition = display.visiblePosition ?? Offset.zero;
-    final visibleHeight = display.visibleSize?.height ?? display.size.height;
+  final display = await ScreenRetriever.instance.getPrimaryDisplay();
+  final offset = display.visiblePosition ?? Offset.zero;
+  final width = display.visibleSize?.width ?? display.size.width;
+  final visibleHeight = display.visibleSize?.height ?? display.size.height;
+  final totalHeight = display.size.height;
+  final topReserved = offset.dy;
+  final bottomReserved =
+    (totalHeight - visibleHeight - topReserved).clamp(0.0, double.infinity);
 
-    final targetTop = _attachTop
-        ? visiblePosition.dy
-        : visiblePosition.dy + visibleHeight - _focusBarHeight;
+  final targetTop = _attachTop
+    ? topReserved
+    : totalHeight - bottomReserved - _focusBarHeight;
 
-    await windowManager.setSize(Size(width, _focusBarHeight));
-    await windowManager.setPosition(Offset(visiblePosition.dx, targetTop));
+  final rect = Rect.fromLTWH(
+    offset.dx,
+    targetTop,
+    width,
+    _focusBarHeight,
+  );
+
+  await windowManager.setBounds(rect);
+  await windowManager.setMinimumSize(Size(width, _focusBarHeight));
+  await windowManager.setMaximumSize(Size(width, _focusBarHeight));
   }
 
   String _buildTrayFocusLabel() {
