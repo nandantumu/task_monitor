@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show Offset, Size;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:screen_retriever/screen_retriever.dart';
+import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 
 const double _focusBarHeight = 50;
@@ -68,7 +69,7 @@ class TaskMonitorApp extends StatelessWidget {
           preferBelow: false,
           verticalOffset: 32,
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.85),
+            color: Colors.black.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(6),
           ),
           textStyle: const TextStyle(
@@ -107,17 +108,30 @@ class _FocusBarState extends State<FocusBar> {
   bool _flashOn = false;
   bool _isAlwaysOnTop = true;
 
+  final SystemTray _systemTray = SystemTray();
+  final Menu _trayMenu = Menu();
+  MenuItemLabel? _trayTimerItem;
+  MenuItemLabel? _trayFocusItem;
+  bool _systemTrayReady = false;
+
   @override
   void initState() {
     super.initState();
+    _focusController.addListener(_handleFocusTextChanged);
     _startCountdown();
     _loadAlwaysOnTopState();
+    unawaited(_initializeSystemTray());
   }
 
   @override
   void dispose() {
+    _focusController.removeListener(_handleFocusTextChanged);
     _countdownTimer?.cancel();
     _flashTimer?.cancel();
+    if (_systemTrayReady) {
+      unawaited(_systemTray.destroy());
+      _systemTrayReady = false;
+    }
     _focusController.dispose();
     _timerController.dispose();
     _timerFocusNode.dispose();
@@ -151,6 +165,8 @@ class _FocusBarState extends State<FocusBar> {
       if (!_isPaused && !_isFlashing) {
         _timerController.text = _formatDuration(_remaining);
       }
+
+      unawaited(_updateSystemTrayContent());
     });
   }
 
@@ -179,6 +195,8 @@ class _FocusBarState extends State<FocusBar> {
         _flashOn = !_flashOn;
       });
     });
+
+    unawaited(_updateSystemTrayContent());
   }
 
   void _pauseTimer() {
@@ -190,6 +208,7 @@ class _FocusBarState extends State<FocusBar> {
       ..text = _formatDuration(_remaining)
       ..selection = TextSelection(baseOffset: 0, extentOffset: _timerController.text.length);
     FocusScope.of(context).requestFocus(_timerFocusNode);
+    unawaited(_updateSystemTrayContent());
   }
 
   void _resetTimer() {
@@ -204,6 +223,7 @@ class _FocusBarState extends State<FocusBar> {
     _timerController.text = _formatDuration(_remaining);
     _timerFocusNode.unfocus();
     _startCountdown();
+    unawaited(_updateSystemTrayContent());
   }
 
   void _handleTimerTap() {
@@ -248,6 +268,115 @@ class _FocusBarState extends State<FocusBar> {
     setState(() {
       _isAlwaysOnTop = newValue;
     });
+    unawaited(_updateSystemTrayContent());
+  }
+
+  void _handleFocusTextChanged() {
+    unawaited(_updateSystemTrayContent());
+  }
+
+  Future<void> _initializeSystemTray() async {
+    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return;
+    }
+
+    try {
+      await _systemTray.initSystemTray(
+        iconPath: 'icon_design/task_monitor_icon_1024x1024.png',
+        toolTip: _buildTrayTooltip(),
+      );
+
+      _trayTimerItem = MenuItemLabel(
+        label: _buildTrayTimerLabel(),
+        enabled: false,
+        name: 'timer',
+      );
+      _trayFocusItem = MenuItemLabel(
+        label: _buildTrayFocusLabel(),
+        enabled: false,
+        name: 'focus',
+      );
+
+      final menuItems = <MenuItemBase>[
+        _trayTimerItem!,
+        _trayFocusItem!,
+        MenuSeparator(),
+        MenuItemLabel(
+          label: 'Show',
+          onClicked: (_) async {
+            await windowManager.show();
+            await windowManager.focus();
+          },
+        ),
+        MenuItemLabel(
+          label: 'Quit',
+          onClicked: (_) async {
+            await windowManager.close();
+          },
+        ),
+      ];
+
+      await _trayMenu.buildFrom(menuItems);
+      await _systemTray.setContextMenu(_trayMenu);
+
+      _systemTray.registerSystemTrayEventHandler((eventName) async {
+        if (eventName == kSystemTrayEventClick) {
+          final isVisible = await windowManager.isVisible();
+          if (!isVisible) {
+            await windowManager.show();
+          }
+          await windowManager.focus();
+        } else if (eventName == kSystemTrayEventRightClick) {
+          await _systemTray.popUpContextMenu();
+        }
+      });
+
+      _systemTrayReady = true;
+      await _updateSystemTrayContent();
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('System tray init failed: $error');
+      }
+    }
+  }
+
+  Future<void> _updateSystemTrayContent() async {
+    if (!_systemTrayReady) {
+      return;
+    }
+
+    final tooltip = _buildTrayTooltip();
+    await _systemTray.setSystemTrayInfo(toolTip: tooltip);
+
+    if (_trayTimerItem != null) {
+      await _trayTimerItem!.setLabel(_buildTrayTimerLabel());
+    }
+    if (_trayFocusItem != null) {
+      await _trayFocusItem!.setLabel(_buildTrayFocusLabel());
+    }
+  }
+
+  String _buildTrayTimerLabel() => 'Timer: ${_formatDuration(_remaining)}';
+
+  String _buildTrayFocusLabel() {
+    final focus = _focusController.text.trim();
+    final content = focus.isEmpty ? 'No focus set' : _truncateWithEllipsis(focus, 60);
+    return 'Focus: $content';
+  }
+
+  String _buildTrayTooltip() {
+    final focus = _focusController.text.trim();
+    final focusText = focus.isEmpty ? 'No focus set' : focus;
+    return 'Focus: $focusText\nTimer: ${_formatDuration(_remaining)}';
+  }
+
+  String _truncateWithEllipsis(String value, int maxLength) {
+    if (value.length <= maxLength) {
+      return value;
+    }
+
+    final truncated = value.substring(0, maxLength - 1).trimRight();
+    return '$truncated…';
   }
 
   static String _formatDuration(Duration duration) {
@@ -267,6 +396,7 @@ class _FocusBarState extends State<FocusBar> {
     _timerFocusNode.unfocus();
     _timerController.text = _formatDuration(_remaining);
     _startCountdown();
+    unawaited(_updateSystemTrayContent());
   }
 
   Duration? _parseDuration(String value) {

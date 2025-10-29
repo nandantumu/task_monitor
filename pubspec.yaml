@@ -37,6 +37,7 @@ dependencies:
   window_manager: ^0.5.1
   screen_retriever: ^0.2.0
   flutter_launcher_icons: ^0.14.4
+  system_tray: ^2.0.3
 
 dev_dependencies:
   flutter_test:
