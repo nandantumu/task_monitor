@@ -12,6 +12,7 @@ const double _focusBarHeight = 50;
 const Duration _sessionDuration = Duration(minutes: 25);
 const Color _barColor = Color(0xFFFFB000);
 const Color _flashColor = Color(0xFFFF4D4F);
+const String _trayIconAsset = 'icon_design/task_monitor_icon_1024x1024.png';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -118,10 +119,12 @@ class _FocusBarState extends State<FocusBar> {
 
   final SystemTray _systemTray = SystemTray();
   final Menu _trayMenu = Menu();
-  MenuItemLabel? _trayTimerItem;
-  MenuItemLabel? _trayFocusItem;
-  MenuItemLabel? _trayAttachItem;
   bool _systemTrayReady = false;
+
+  String? _lastTrayTooltip;
+  String? _lastTrayTimerLabel;
+  String? _lastTrayFocusLabel;
+  String? _lastTrayAttachLabel;
 
   @override
   void initState() {
@@ -292,47 +295,15 @@ class _FocusBarState extends State<FocusBar> {
 
     try {
       await _systemTray.initSystemTray(
-        iconPath: 'icon_design/task_monitor_icon_1024x1024.png',
+        iconPath: _trayIconAsset,
         toolTip: _buildTrayTooltip(),
       );
 
-      _trayTimerItem = MenuItemLabel(
-        label: _buildTrayTimerLabel(),
-        enabled: false,
-        name: 'timer',
+      await _rebuildSystemTrayMenu(
+        timerLabel: _buildTrayTimerLabel(),
+        focusLabel: _buildTrayFocusLabel(),
+        attachLabel: _buildTrayAttachLabel(),
       );
-      _trayFocusItem = MenuItemLabel(
-        label: _buildTrayFocusLabel(),
-        enabled: false,
-        name: 'focus',
-      );
-      _trayAttachItem = MenuItemLabel(
-        label: _buildTrayAttachLabel(),
-        onClicked: (_) => _toggleAttachPosition(),
-      );
-
-      final menuItems = <MenuItemBase>[
-        _trayTimerItem!,
-        _trayFocusItem!,
-        _trayAttachItem!,
-        MenuSeparator(),
-        MenuItemLabel(
-          label: 'Show',
-          onClicked: (_) async {
-            await windowManager.show();
-            await windowManager.focus();
-          },
-        ),
-        MenuItemLabel(
-          label: 'Quit',
-          onClicked: (_) async {
-            await windowManager.close();
-          },
-        ),
-      ];
-
-      await _trayMenu.buildFrom(menuItems);
-      await _systemTray.setContextMenu(_trayMenu);
 
       _systemTray.registerSystemTrayEventHandler((eventName) async {
         if (eventName == kSystemTrayEventClick) {
@@ -362,17 +333,76 @@ class _FocusBarState extends State<FocusBar> {
     }
 
     final tooltip = _buildTrayTooltip();
-    await _systemTray.setSystemTrayInfo(toolTip: tooltip);
+    if (tooltip != _lastTrayTooltip) {
+      await _systemTray.setSystemTrayInfo(
+        toolTip: tooltip,
+        iconPath: _trayIconAsset,
+      );
+      _lastTrayTooltip = tooltip;
+    }
 
-    if (_trayTimerItem != null) {
-      await _trayTimerItem!.setLabel(_buildTrayTimerLabel());
+    final timerLabel = _buildTrayTimerLabel();
+    final focusLabel = _buildTrayFocusLabel();
+    final attachLabel = _buildTrayAttachLabel();
+
+    final labelsChanged = timerLabel != _lastTrayTimerLabel ||
+        focusLabel != _lastTrayFocusLabel ||
+        attachLabel != _lastTrayAttachLabel;
+
+    if (labelsChanged) {
+      await _rebuildSystemTrayMenu(
+        timerLabel: timerLabel,
+        focusLabel: focusLabel,
+        attachLabel: attachLabel,
+      );
     }
-    if (_trayFocusItem != null) {
-      await _trayFocusItem!.setLabel(_buildTrayFocusLabel());
-    }
-    if (_trayAttachItem != null) {
-      await _trayAttachItem!.setLabel(_buildTrayAttachLabel());
-    }
+  }
+
+  Future<void> _rebuildSystemTrayMenu({
+    required String timerLabel,
+    required String focusLabel,
+    required String attachLabel,
+  }) async {
+    final menuItems = <MenuItemBase>[
+      MenuItemLabel(
+        label: timerLabel,
+        enabled: false,
+        name: 'timer',
+      ),
+      MenuItemLabel(
+        label: focusLabel,
+        enabled: false,
+        name: 'focus',
+      ),
+      MenuItemLabel(
+        label: attachLabel,
+        onClicked: (_) => _toggleAttachPosition(),
+        name: 'attach-position',
+      ),
+      MenuSeparator(),
+      MenuItemLabel(
+        label: 'Show',
+        onClicked: (_) async {
+          await windowManager.show();
+          await windowManager.focus();
+        },
+        name: 'show',
+      ),
+      MenuItemLabel(
+        label: 'Quit',
+        onClicked: (_) async {
+          await windowManager.close();
+        },
+        name: 'quit',
+      ),
+    ];
+
+    await _trayMenu.buildFrom(menuItems);
+    await _systemTray.setContextMenu(_trayMenu);
+
+    _lastTrayTimerLabel = timerLabel;
+    _lastTrayFocusLabel = focusLabel;
+    _lastTrayAttachLabel = attachLabel;
   }
 
   String _buildTrayTimerLabel() => 'Timer: ${_formatDuration(_remaining)}';
