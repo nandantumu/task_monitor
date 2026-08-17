@@ -13,6 +13,6 @@ void main() {
   testWidgets('Focus bar renders with prompt', (WidgetTester tester) async {
     await tester.pumpWidget(const TaskMonitorApp());
 
-    expect(find.textContaining('Current Focus'), findsOneWidget);
+    expect(find.textContaining('CF:'), findsOneWidget);
   });
 }

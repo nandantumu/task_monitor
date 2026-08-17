@@ -37,7 +37,6 @@ Future<void> _configureDesktopWindow() async {
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.setAsFrameless();
-    await windowManager.setResizable(false);
     await windowManager.setMaximizable(false);
     await windowManager.setMinimizable(false);
     await windowManager.setAlwaysOnTop(true);
@@ -53,6 +52,8 @@ Future<void> _configureDesktopWindow() async {
     );
 
     await windowManager.setBounds(rect);
+    await windowManager.setSize(Size(width, _focusBarHeight));
+    await windowManager.setPosition(Offset(offset.dx, offset.dy));
     await windowManager.setMinimumSize(Size(width, _focusBarHeight));
     await windowManager.setMaximumSize(Size(width, _focusBarHeight));
     await windowManager.show();
@@ -70,6 +71,8 @@ class TaskMonitorApp extends StatelessWidget {
       title: 'Task Monitor',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
+        scaffoldBackgroundColor: Colors.transparent,
+        canvasColor: Colors.transparent,
         useMaterial3: true,
         tooltipTheme: TooltipThemeData(
           waitDuration: const Duration(milliseconds: 300),
@@ -117,6 +120,9 @@ class _FocusBarState extends State<FocusBar> {
   bool _isAlwaysOnTop = true;
   bool _attachTop = true;
 
+  List<Display> _displays = [];
+  int _currentDisplayIndex = 0;
+
   final SystemTray _systemTray = SystemTray();
   final Menu _trayMenu = Menu();
   bool _systemTrayReady = false;
@@ -125,6 +131,7 @@ class _FocusBarState extends State<FocusBar> {
   String? _lastTrayTimerLabel;
   String? _lastTrayFocusLabel;
   String? _lastTrayAttachLabel;
+  String? _lastTrayMonitorLabel;
 
   @override
   void initState() {
@@ -133,7 +140,7 @@ class _FocusBarState extends State<FocusBar> {
     _startCountdown();
     _loadAlwaysOnTopState();
     unawaited(_initializeSystemTray());
-    unawaited(_updateWindowPosition());
+    unawaited(_initDisplaysAndPosition());
   }
 
   @override
@@ -149,6 +156,70 @@ class _FocusBarState extends State<FocusBar> {
     _timerController.dispose();
     _timerFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _initDisplaysAndPosition() async {
+    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return;
+    }
+    try {
+      final displays = await ScreenRetriever.instance.getAllDisplays();
+      final primary = await ScreenRetriever.instance.getPrimaryDisplay();
+      if (displays.isNotEmpty && mounted) {
+        final primaryIndex = displays.indexWhere((d) =>
+            (d.visiblePosition?.dx == primary.visiblePosition?.dx &&
+             d.visiblePosition?.dy == primary.visiblePosition?.dy) ||
+            (d.size.width == primary.size.width && d.size.height == primary.size.height));
+        setState(() {
+          _displays = displays;
+          _currentDisplayIndex = primaryIndex != -1 ? primaryIndex : 0;
+        });
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Error initializing displays: $error');
+      }
+    }
+    await _updateWindowPosition();
+  }
+
+  Future<void> _refreshDisplays() async {
+    if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return;
+    }
+    try {
+      final displays = await ScreenRetriever.instance.getAllDisplays();
+      if (displays.isNotEmpty && mounted) {
+        setState(() {
+          _displays = displays;
+          if (_currentDisplayIndex >= _displays.length) {
+            _currentDisplayIndex = 0;
+          }
+        });
+      }
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('Error refreshing displays: $error');
+      }
+    }
+  }
+
+  Future<void> _switchDisplay([int? targetIndex]) async {
+    await _refreshDisplays();
+    if (_displays.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      if (targetIndex != null && targetIndex >= 0 && targetIndex < _displays.length) {
+        _currentDisplayIndex = targetIndex;
+      } else {
+        _currentDisplayIndex = (_currentDisplayIndex + 1) % _displays.length;
+      }
+    });
+
+    await _updateWindowPosition();
+    unawaited(_updateSystemTrayContent());
   }
 
   void _startCountdown() {
@@ -303,6 +374,7 @@ class _FocusBarState extends State<FocusBar> {
         timerLabel: _buildTrayTimerLabel(),
         focusLabel: _buildTrayFocusLabel(),
         attachLabel: _buildTrayAttachLabel(),
+        monitorLabel: _buildTrayMonitorLabel(),
       );
 
       _systemTray.registerSystemTrayEventHandler((eventName) async {
@@ -344,16 +416,19 @@ class _FocusBarState extends State<FocusBar> {
     final timerLabel = _buildTrayTimerLabel();
     final focusLabel = _buildTrayFocusLabel();
     final attachLabel = _buildTrayAttachLabel();
+    final monitorLabel = _buildTrayMonitorLabel();
 
     final labelsChanged = timerLabel != _lastTrayTimerLabel ||
         focusLabel != _lastTrayFocusLabel ||
-        attachLabel != _lastTrayAttachLabel;
+        attachLabel != _lastTrayAttachLabel ||
+        monitorLabel != _lastTrayMonitorLabel;
 
     if (labelsChanged) {
       await _rebuildSystemTrayMenu(
         timerLabel: timerLabel,
         focusLabel: focusLabel,
         attachLabel: attachLabel,
+        monitorLabel: monitorLabel,
       );
     }
   }
@@ -362,6 +437,7 @@ class _FocusBarState extends State<FocusBar> {
     required String timerLabel,
     required String focusLabel,
     required String attachLabel,
+    required String monitorLabel,
   }) async {
     final menuItems = <MenuItemBase>[
       MenuItemLabel(
@@ -378,6 +454,11 @@ class _FocusBarState extends State<FocusBar> {
         label: attachLabel,
         onClicked: (_) => _toggleAttachPosition(),
         name: 'attach-position',
+      ),
+      MenuItemLabel(
+        label: monitorLabel,
+        onClicked: (_) => _switchDisplay(),
+        name: 'switch-monitor',
       ),
       MenuSeparator(),
       MenuItemLabel(
@@ -403,12 +484,20 @@ class _FocusBarState extends State<FocusBar> {
     _lastTrayTimerLabel = timerLabel;
     _lastTrayFocusLabel = focusLabel;
     _lastTrayAttachLabel = attachLabel;
+    _lastTrayMonitorLabel = monitorLabel;
   }
 
   String _buildTrayTimerLabel() => 'Timer: ${_formatDuration(_remaining)}';
 
   String _buildTrayAttachLabel() =>
       _attachTop ? 'Attach to bottom' : 'Attach to top';
+
+  String _buildTrayMonitorLabel() {
+    if (_displays.length > 1) {
+      return 'Switch Monitor (${_currentDisplayIndex + 1}/${_displays.length})';
+    }
+    return 'Switch Monitor';
+  }
 
   Future<void> _toggleAttachPosition() async {
     _attachTop = !_attachTop;
@@ -421,41 +510,55 @@ class _FocusBarState extends State<FocusBar> {
       return;
     }
 
-  final display = await ScreenRetriever.instance.getPrimaryDisplay();
-  final offset = display.visiblePosition ?? Offset.zero;
-  final width = display.visibleSize?.width ?? display.size.width;
-  final visibleHeight = display.visibleSize?.height ?? display.size.height;
-  final totalHeight = display.size.height;
-  final topReserved = offset.dy;
-  final bottomReserved =
-    (totalHeight - visibleHeight - topReserved).clamp(0.0, double.infinity);
+    try {
+      final displays = await ScreenRetriever.instance.getAllDisplays();
+      if (displays.isNotEmpty) {
+        _displays = displays;
+        if (_currentDisplayIndex >= _displays.length) {
+          _currentDisplayIndex = 0;
+        }
+      }
+    } catch (_) {}
 
-  final targetTop = _attachTop
-    ? topReserved
-    : totalHeight - bottomReserved - _focusBarHeight;
+    final display = _displays.isNotEmpty && _currentDisplayIndex < _displays.length
+        ? _displays[_currentDisplayIndex]
+        : await ScreenRetriever.instance.getPrimaryDisplay();
 
-  final rect = Rect.fromLTWH(
-    offset.dx,
-    targetTop,
-    width,
-    _focusBarHeight,
-  );
+    final offset = display.visiblePosition ?? Offset.zero;
+    final width = display.visibleSize?.width ?? display.size.width;
+    final visibleHeight = display.visibleSize?.height ?? display.size.height;
 
-  await windowManager.setBounds(rect);
-  await windowManager.setMinimumSize(Size(width, _focusBarHeight));
-  await windowManager.setMaximumSize(Size(width, _focusBarHeight));
+    final targetTop = _attachTop
+        ? offset.dy
+        : offset.dy + visibleHeight - _focusBarHeight;
+
+    final rect = Rect.fromLTWH(
+      offset.dx,
+      targetTop,
+      width,
+      _focusBarHeight,
+    );
+
+    // Apply strict width & height geometry hints
+    await windowManager.setMinimumSize(Size(width, _focusBarHeight));
+    await windowManager.setMaximumSize(Size(width, _focusBarHeight));
+
+    // Apply explicit bounds, size, and position
+    await windowManager.setBounds(rect);
+    await windowManager.setSize(Size(width, _focusBarHeight));
+    await windowManager.setPosition(Offset(offset.dx, targetTop));
   }
 
   String _buildTrayFocusLabel() {
     final focus = _focusController.text.trim();
     final content = focus.isEmpty ? 'No focus set' : _truncateWithEllipsis(focus, 60);
-    return 'Focus: $content';
+    return 'CF: $content';
   }
 
   String _buildTrayTooltip() {
     final focus = _focusController.text.trim();
     final focusText = focus.isEmpty ? 'No focus set' : focus;
-    return 'Focus: $focusText\nTimer: ${_formatDuration(_remaining)}';
+    return 'CF: $focusText\nTimer: ${_formatDuration(_remaining)}';
   }
 
   String _truncateWithEllipsis(String value, int maxLength) {
@@ -517,106 +620,109 @@ class _FocusBarState extends State<FocusBar> {
   Widget build(BuildContext context) {
     final backgroundColor = _isFlashing && _flashOn ? _flashColor : _barColor;
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: SizedBox(
-          height: _focusBarHeight,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
-            color: backgroundColor,
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _focusController,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      prefixText: 'Current Focus: ',
-                      prefixStyle: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+      backgroundColor: backgroundColor,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        color: backgroundColor,
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _focusController,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  prefixText: 'CF: ',
+                  prefixStyle: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: _handleTimerTap,
-                  behavior: HitTestBehavior.translucent,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: _isPaused
-                        ? SizedBox(
-                            key: const ValueKey('timer-editor'),
-                            width: 110,
-                            child: TextField(
-                              controller: _timerController,
-                              focusNode: _timerFocusNode,
-                              textAlign: TextAlign.right,
-                              keyboardType: TextInputType.number,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(
-                                  RegExp(r'[0-9:]'),
-                                ),
-                              ],
-                              style: const TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                border: InputBorder.none,
-                              ),
-                            ),
-                          )
-                        : Text(
-                            key: const ValueKey('timer-display'),
-                            _formatDuration(_remaining),
-                            style: const TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: _isFlashing || _remaining == Duration.zero
-                      ? 'Restart focus session'
-                      : _isPaused
-                          ? 'Start timer'
-                          : 'Pause timer',
-                  icon: Icon(
-                    _isFlashing || _remaining == Duration.zero
-                        ? Icons.refresh
-                        : _isPaused
-                            ? Icons.play_arrow
-                            : Icons.pause,
-                  ),
-                  color: Colors.black,
-                  onPressed: _handleControlTap,
-                ),
-                IconButton(
-                  tooltip: _isAlwaysOnTop
-                      ? 'Disable always-on-top'
-                      : 'Enable always-on-top',
-                  icon: Icon(
-                    _isAlwaysOnTop
-                        ? Icons.arrow_circle_up
-                        : Icons.arrow_circle_down,
-                  ),
-                  color: Colors.black,
-                  onPressed: _toggleAlwaysOnTop,
-                ),
-              ],
+              ),
             ),
-          ),
+            const SizedBox(width: 12),
+            GestureDetector(
+              onTap: _handleTimerTap,
+              behavior: HitTestBehavior.translucent,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: _isPaused
+                    ? SizedBox(
+                        key: const ValueKey('timer-editor'),
+                        width: 90,
+                        child: TextField(
+                          controller: _timerController,
+                          focusNode: _timerFocusNode,
+                          textAlign: TextAlign.right,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'[0-9:]'),
+                            ),
+                          ],
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: InputBorder.none,
+                          ),
+                        ),
+                      )
+                    : Text(
+                        key: const ValueKey('timer-display'),
+                        _formatDuration(_remaining),
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: _isFlashing || _remaining == Duration.zero
+                  ? 'Restart focus session'
+                  : _isPaused
+                      ? 'Start timer'
+                      : 'Pause timer',
+              icon: Icon(
+                _isFlashing || _remaining == Duration.zero
+                    ? Icons.refresh
+                    : _isPaused
+                        ? Icons.play_arrow
+                        : Icons.pause,
+              ),
+              color: Colors.black,
+              onPressed: _handleControlTap,
+            ),
+            IconButton(
+              tooltip: _isAlwaysOnTop
+                  ? 'Disable always-on-top'
+                  : 'Enable always-on-top',
+              icon: Icon(
+                _isAlwaysOnTop
+                    ? Icons.arrow_circle_up
+                    : Icons.arrow_circle_down,
+              ),
+              color: Colors.black,
+              onPressed: _toggleAlwaysOnTop,
+            ),
+            IconButton(
+              tooltip: _displays.length > 1
+                  ? 'Move to next monitor (${_currentDisplayIndex + 1}/${_displays.length})'
+                  : 'Move to next monitor',
+              icon: const Icon(Icons.desktop_windows_outlined),
+              color: Colors.black,
+              onPressed: _switchDisplay,
+            ),
+          ],
         ),
       ),
     );
