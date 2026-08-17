@@ -42,19 +42,38 @@ Future<void> _configureDesktopWindow() async {
     await windowManager.setMinimizable(false);
     await windowManager.setAlwaysOnTop(true);
 
-    final display = await ScreenRetriever.instance.getPrimaryDisplay();
-    final offset = display.visiblePosition ?? Offset.zero;
-    final width = display.visibleSize?.width ?? display.size.width;
+    double posX = 0;
+    double posY = 0;
+    double width = 1920;
+
+    if (Platform.isLinux) {
+      final physicalMonitors = await WindowStrutService().getPhysicalMonitors();
+      if (physicalMonitors.isNotEmpty) {
+        final primary = physicalMonitors.firstWhere((m) => m.isPrimary, orElse: () => physicalMonitors[0]);
+        posX = primary.x;
+        posY = primary.y;
+        width = primary.width;
+      }
+    }
+
+    if (width == 1920) {
+      final display = await ScreenRetriever.instance.getPrimaryDisplay();
+      final offset = display.visiblePosition ?? Offset.zero;
+      posX = offset.dx;
+      posY = offset.dy;
+      width = display.size.width;
+    }
+
     final rect = Rect.fromLTWH(
-      offset.dx,
-      offset.dy,
+      posX,
+      posY,
       width,
       _focusBarHeight,
     );
 
     await windowManager.setBounds(rect);
     await windowManager.setSize(Size(width, _focusBarHeight));
-    await windowManager.setPosition(Offset(offset.dx, offset.dy));
+    await windowManager.setPosition(Offset(posX, posY));
     await windowManager.setMinimumSize(Size(width, _focusBarHeight));
     await windowManager.setMaximumSize(Size(width, _focusBarHeight));
     await windowManager.show();
@@ -384,6 +403,28 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
     unawaited(_updateSystemTrayState());
   }
 
+  PhysicalMonitor? _findMatchingMonitor(Display display, List<PhysicalMonitor> physicalMonitors) {
+    // 1. Match by position proximity (within 150px to account for docks/panels)
+    final dispX = display.visiblePosition?.dx ?? 0.0;
+    final dispY = display.visiblePosition?.dy ?? 0.0;
+    for (final mon in physicalMonitors) {
+      if ((mon.x - dispX).abs() < 150 && (mon.y - dispY).abs() < 150) {
+        return mon;
+      }
+    }
+    // 2. Match by size proximity (within 150px to account for docks/panels)
+    for (final mon in physicalMonitors) {
+      if ((mon.width - display.size.width).abs() < 150 && (mon.height - display.size.height).abs() < 150) {
+        return mon;
+      }
+    }
+    // 3. Fallback by index or primary
+    if (_currentDisplayIndex < physicalMonitors.length) {
+      return physicalMonitors[_currentDisplayIndex];
+    }
+    return physicalMonitors.isNotEmpty ? physicalMonitors.first : null;
+  }
+
   Future<void> _applyWindowStrut() async {
     if (!Platform.isLinux || !_isAlwaysOnTop) {
       return;
@@ -392,16 +433,23 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
       final display = _displays.isNotEmpty && _currentDisplayIndex < _displays.length
           ? _displays[_currentDisplayIndex]
           : await ScreenRetriever.instance.getPrimaryDisplay();
-      final offset = display.visiblePosition ?? Offset.zero;
-      final width = display.visibleSize?.width ?? display.size.width;
-      final visibleHeight = display.visibleSize?.height ?? display.size.height;
+
+      final physicalMonitors = await _windowStrutService.getPhysicalMonitors();
+      final mon = _findMatchingMonitor(display, physicalMonitors);
+
+      final bool isRight = (display.visiblePosition?.dx ?? 0.0) >= 1000;
+      final double defaultX = isRight ? 1080.0 : 0.0;
+      final double displayX = mon?.x ?? defaultX;
+      final double displayY = mon?.y ?? 0.0;
+      final double displayWidth = mon?.width ?? display.size.width;
+      final double displayHeight = mon?.height ?? display.size.height;
 
       await _windowStrutService.reserveStrut(
         attachTop: _attachTop,
-        displayX: offset.dx,
-        displayY: offset.dy,
-        displayWidth: width,
-        displayHeight: visibleHeight,
+        displayX: displayX,
+        displayY: displayY,
+        displayWidth: displayWidth,
+        displayHeight: displayHeight,
         barHeight: _focusBarHeight,
       );
     } catch (e) {
@@ -428,27 +476,15 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
 
       _systemTrayReady = true;
 
-      await _rebuildSystemTrayMenu(
-        statusLabel: _buildTrayStatusLabel(),
-        focusLabel: _buildTrayFocusLabel(),
-        attachLabel: _buildTrayAttachLabel(),
-        monitorLabel: _buildTrayMonitorLabel(),
-        playPauseLabel: _isPaused ? 'Start timer' : 'Pause timer',
-      );
-
-      _systemTray.registerSystemTrayEventHandler((eventName) async {
+      _systemTray.registerSystemTrayEventHandler((eventName) {
         if (eventName == kSystemTrayEventClick) {
-          final isVisible = await windowManager.isVisible();
-          if (!isVisible) {
-            await windowManager.show();
-          }
-          await windowManager.focus();
+          unawaited(windowManager.show());
+          unawaited(windowManager.focus());
         } else if (eventName == kSystemTrayEventRightClick) {
-          await _systemTray.popUpContextMenu();
+          unawaited(_systemTray.popUpContextMenu());
         }
       });
 
-      await _updateWindowPosition();
       await _updateSystemTrayState();
     } catch (error) {
       if (kDebugMode) {
@@ -624,16 +660,22 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
         ? _displays[_currentDisplayIndex]
         : await ScreenRetriever.instance.getPrimaryDisplay();
 
-    final offset = display.visiblePosition ?? Offset.zero;
-    final width = display.visibleSize?.width ?? display.size.width;
-    final visibleHeight = display.visibleSize?.height ?? display.size.height;
+    final physicalMonitors = await _windowStrutService.getPhysicalMonitors();
+    final mon = _findMatchingMonitor(display, physicalMonitors);
+
+    final bool isRight = (display.visiblePosition?.dx ?? 0.0) >= 1000;
+    final double defaultX = isRight ? 1080.0 : 0.0;
+    final double posX = mon?.x ?? defaultX;
+    final double posY = mon?.y ?? 0.0;
+    final double width = mon?.width ?? display.size.width;
+    final double height = mon?.height ?? display.size.height;
 
     final targetTop = _attachTop
-        ? offset.dy
-        : offset.dy + visibleHeight - _focusBarHeight;
+        ? posY
+        : posY + height - _focusBarHeight;
 
     final rect = Rect.fromLTWH(
-      offset.dx,
+      posX,
       targetTop,
       width,
       _focusBarHeight,
@@ -646,10 +688,16 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
     // Apply explicit bounds, size, and position
     await windowManager.setBounds(rect);
     await windowManager.setSize(Size(width, _focusBarHeight));
-    await windowManager.setPosition(Offset(offset.dx, targetTop));
+    await windowManager.setPosition(Offset(posX, targetTop));
 
     // Apply workarea reservation strut on Linux
     if (Platform.isLinux) {
+      unawaited(_windowStrutService.moveResizeWindow(
+        x: posX.round(),
+        y: targetTop.round(),
+        width: width.round(),
+        height: _focusBarHeight.round(),
+      ));
       if (_isAlwaysOnTop) {
         unawaited(_applyWindowStrut());
       } else {
