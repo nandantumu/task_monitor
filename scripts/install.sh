@@ -164,8 +164,8 @@ StartupNotify=true
 Keywords=task;monitor;focus;pomodoro;timer;
 EOF
 
-chmod +x "${APP_DIR}/com.example.task_monitor.desktop"
-cp "${APP_DIR}/com.example.task_monitor.desktop" "${APP_DIR}/task_monitor.desktop"
+chmod 644 "${APP_DIR}/com.example.task_monitor.desktop"
+rm -f "${APP_DIR}/task_monitor.desktop"
 
 # 5. Update Caches
 echo "Updating desktop and icon caches..."
