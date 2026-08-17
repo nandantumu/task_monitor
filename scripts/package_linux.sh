@@ -20,6 +20,15 @@ echo "==========================================================================
 echo " Packaging Task Monitor v${VERSION} (${ARCH})"
 echo "=============================================================================="
 
+# Ensure flutter is in PATH
+if ! command -v flutter >/dev/null 2>&1; then
+  if [ -x "/home/nandan/SourceCode/999_OLD_PROJECTS/flutter/bin/flutter" ]; then
+    export PATH="/home/nandan/SourceCode/999_OLD_PROJECTS/flutter/bin:$PATH"
+  elif [ -d "${HOME}/flutter/bin" ]; then
+    export PATH="${HOME}/flutter/bin:$PATH"
+  fi
+fi
+
 # 1. Build Flutter Release Bundle
 echo "Building Flutter Linux release bundle..."
 (cd "${REPO_DIR}" && flutter build linux --release)

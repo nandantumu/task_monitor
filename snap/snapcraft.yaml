@@ -1,0 +1,34 @@
+name: task-monitor
+version: '1.0.0'
+summary: Task Monitor
+description: An obnoxious taskbar that reminds you what you're supposed to be doing.
+confinement: strict
+base: core22
+grade: stable
+
+apps:
+  task-monitor:
+    command: bin/task-monitor
+    extensions: [gnome]
+    plugs:
+      - network
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - pulseaudio
+      - audio-playback
+
+parts:
+  task-monitor:
+    source: .
+    plugin: flutter
+    flutter-target: lib/main.dart
+    override-build: |
+      set -eux
+      rm -rf build linux/flutter/ephemeral
+      # in case a nested cmake cache exists
+      rm -rf build/linux
+      flutter clean || true
+      craftctl default
+

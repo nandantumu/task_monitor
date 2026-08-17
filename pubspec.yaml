@@ -38,6 +38,7 @@ dependencies:
   screen_retriever: ^0.2.0
   flutter_launcher_icons: ^0.14.4
   system_tray: ^2.0.3
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

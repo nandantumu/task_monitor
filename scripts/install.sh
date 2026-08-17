@@ -101,6 +101,14 @@ elif [ -d "${REPO_DIR}/build/linux/x64/release/bundle" ] && [ -f "${REPO_DIR}/bu
   BUNDLE_DIR="${REPO_DIR}/build/linux/x64/release/bundle"
 else
   echo "Release bundle not found. Building with Flutter..."
+  if ! command -v flutter >/dev/null 2>&1; then
+    if [ -x "/home/nandan/SourceCode/999_OLD_PROJECTS/flutter/bin/flutter" ]; then
+      export PATH="/home/nandan/SourceCode/999_OLD_PROJECTS/flutter/bin:$PATH"
+    elif [ -d "${HOME}/flutter/bin" ]; then
+      export PATH="${HOME}/flutter/bin:$PATH"
+    fi
+  fi
+
   if command -v flutter >/dev/null 2>&1; then
     (cd "${REPO_DIR}" && flutter build linux --release)
     BUNDLE_DIR="${REPO_DIR}/build/linux/x64/release/bundle"

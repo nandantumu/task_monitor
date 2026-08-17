@@ -8,6 +8,10 @@ import 'package:screen_retriever/screen_retriever.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'services/focus_verifier_service.dart';
+import 'services/screen_capture_service.dart';
+import 'widgets/focus_pie_chart.dart';
+
 const double _focusBarHeight = 50;
 const Duration _sessionDuration = Duration(minutes: 25);
 const Color _barColor = Color(0xFFFFB000);
@@ -111,14 +115,24 @@ class _FocusBarState extends State<FocusBar> {
       TextEditingController(text: _formatDuration(_sessionDuration));
   final FocusNode _timerFocusNode = FocusNode();
 
+  final FocusVerifierService _focusVerifier = FocusVerifierService();
   Timer? _countdownTimer;
   Timer? _flashTimer;
+  Timer? _aiAuditTimer;
+
   Duration _remaining = _sessionDuration;
   bool _isPaused = false;
   bool _isFlashing = false;
   bool _flashOn = false;
   bool _isAlwaysOnTop = true;
   bool _attachTop = true;
+
+  // Gemma AI verification state
+  bool _isAiAuditEnabled = false;
+  bool _isAuditing = false;
+  double? _focusMatchPercentage;
+  String? _focusMatchReason;
+  final Duration _aiAuditInterval = const Duration(minutes: 1);
 
   List<Display> _displays = [];
   int _currentDisplayIndex = 0;
@@ -149,6 +163,8 @@ class _FocusBarState extends State<FocusBar> {
     _focusController.removeListener(_handleFocusTextChanged);
     _countdownTimer?.cancel();
     _flashTimer?.cancel();
+    _aiAuditTimer?.cancel();
+    _focusVerifier.dispose();
     if (_systemTrayReady) {
       unawaited(_systemTray.destroy());
       _systemTrayReady = false;
@@ -452,6 +468,117 @@ class _FocusBarState extends State<FocusBar> {
     }
   }
 
+  void _toggleAiAudit() {
+    setState(() {
+      _isAiAuditEnabled = !_isAiAuditEnabled;
+      if (!_isAiAuditEnabled) {
+        _aiAuditTimer?.cancel();
+        _focusMatchPercentage = null;
+        _focusMatchReason = null;
+        _isAuditing = false;
+      }
+    });
+
+    if (_isAiAuditEnabled) {
+      _startAiAuditTimer();
+      unawaited(_runAiAudit(immediate: true));
+    }
+
+    unawaited(_updateSystemTrayState());
+  }
+
+  void _startAiAuditTimer() {
+    _aiAuditTimer?.cancel();
+    if (!_isAiAuditEnabled) {
+      return;
+    }
+    _aiAuditTimer = Timer.periodic(_aiAuditInterval, (_) {
+      if (!mounted || !_isAiAuditEnabled || _isPaused) {
+        return;
+      }
+      unawaited(_runAiAudit());
+    });
+  }
+
+  Future<void> _runAiAudit({bool immediate = false}) async {
+    if (!mounted || !_isAiAuditEnabled || _isAuditing) {
+      return;
+    }
+
+    setState(() {
+      _isAuditing = true;
+    });
+
+    try {
+      final capture = await ScreenCaptureService.captureScreen();
+      if (capture == null) {
+        if (mounted) {
+          setState(() {
+            _isAuditing = false;
+          });
+        }
+        return;
+      }
+
+      final result = await _focusVerifier.verifyFocus(
+        focusText: _focusController.text,
+        base64Image: capture.base64Image,
+      );
+
+      if (!mounted || !_isAiAuditEnabled) {
+        return;
+      }
+
+      setState(() {
+        _focusMatchPercentage = result.matchPercentage;
+        _focusMatchReason = result.reason;
+        _isAuditing = false;
+      });
+
+      // If score is red (< 20%), trigger off-task flashing alert!
+      if (result.isLowMatch && !_isFlashing) {
+        unawaited(_triggerOffTaskAlert(result.reason));
+      }
+
+      unawaited(_updateSystemTrayState());
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isAuditing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _triggerOffTaskAlert(String reason) async {
+    if (!mounted || _isFlashing) {
+      return;
+    }
+
+    _flashTimer?.cancel();
+    await windowManager.setAlwaysOnTop(true);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isFlashing = true;
+      _flashOn = true;
+    });
+
+    _flashTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (!mounted) {
+        _flashTimer?.cancel();
+        return;
+      }
+      setState(() {
+        _flashOn = !_flashOn;
+      });
+    });
+
+    unawaited(_updateSystemTrayState());
+  }
+
   Future<void> _rebuildSystemTrayMenu({
     required String statusLabel,
     required String focusLabel,
@@ -470,6 +597,20 @@ class _FocusBarState extends State<FocusBar> {
         enabled: false,
         name: 'focus',
       ),
+      MenuSeparator(),
+      MenuItemLabel(
+        label: _isAiAuditEnabled
+            ? 'Gemma AI Auditor: ON (${_focusMatchPercentage != null ? "${_focusMatchPercentage!.toStringAsFixed(0)}%" : "Auditing"})'
+            : 'Gemma AI Auditor: OFF',
+        onClicked: (_) => _toggleAiAudit(),
+        name: 'toggle-ai',
+      ),
+      if (_isAiAuditEnabled)
+        MenuItemLabel(
+          label: 'Audit Screen with Gemma Now',
+          onClicked: (_) => _runAiAudit(immediate: true),
+          name: 'audit-now',
+        ),
       MenuSeparator(),
       MenuItemLabel(
         label: playPauseLabel,
@@ -601,7 +742,12 @@ class _FocusBarState extends State<FocusBar> {
   String _buildTrayTooltip() {
     final focus = _focusController.text.trim();
     final focusText = focus.isEmpty ? 'No focus set' : focus;
-    return 'CF: $focusText\nTimer: ${_formatDuration(_remaining)}';
+    final aiText = _isAiAuditEnabled
+        ? (_focusMatchPercentage != null
+            ? '\nGemma Match: ${_focusMatchPercentage!.toStringAsFixed(0)}%'
+            : '\nGemma Match: Auditing...')
+        : '';
+    return 'CF: $focusText\nTimer: ${_formatDuration(_remaining)}$aiText';
   }
 
   String _truncateWithEllipsis(String value, int maxLength) {
@@ -688,7 +834,27 @@ class _FocusBarState extends State<FocusBar> {
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
+            FocusPieChart(
+              percentage: _focusMatchPercentage,
+              isEnabled: _isAiAuditEnabled,
+              isLoading: _isAuditing,
+              tooltipReason: _focusMatchReason,
+              onTap: () => _runAiAudit(immediate: true),
+            ),
+            IconButton(
+              tooltip: _isAiAuditEnabled
+                  ? 'Disable Gemma AI focus auditor'
+                  : 'Enable Gemma AI focus auditor',
+              icon: Icon(
+                _isAiAuditEnabled
+                    ? Icons.auto_awesome
+                    : Icons.auto_awesome_outlined,
+              ),
+              color: Colors.black,
+              onPressed: _toggleAiAudit,
+            ),
+            const SizedBox(width: 8),
             GestureDetector(
               onTap: _handleTimerTap,
               behavior: HitTestBehavior.translucent,

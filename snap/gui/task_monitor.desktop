@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Task Monitor
+Comment=An obnoxious taskbar that tells you what you should be doing.
+Exec=${SNAP}/bin/task-monitor
+Icon=${SNAP}/meta/gui/task_monitor.png
+Terminal=false
+Type=Application
+Categories=Productivity;
