@@ -128,10 +128,11 @@ class _FocusBarState extends State<FocusBar> {
   bool _systemTrayReady = false;
 
   String? _lastTrayTooltip;
-  String? _lastTrayTimerLabel;
+  String? _lastTrayStatusLabel;
   String? _lastTrayFocusLabel;
   String? _lastTrayAttachLabel;
   String? _lastTrayMonitorLabel;
+  String? _lastTrayPlayPauseLabel;
 
   @override
   void initState() {
@@ -219,7 +220,7 @@ class _FocusBarState extends State<FocusBar> {
     });
 
     await _updateWindowPosition();
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   void _startCountdown() {
@@ -250,7 +251,8 @@ class _FocusBarState extends State<FocusBar> {
         _timerController.text = _formatDuration(_remaining);
       }
 
-      unawaited(_updateSystemTrayContent());
+      // Update hover tooltip with current time without rebuilding the DBus context menu
+      unawaited(_updateSystemTrayTooltip());
     });
   }
 
@@ -280,7 +282,7 @@ class _FocusBarState extends State<FocusBar> {
       });
     });
 
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   void _pauseTimer() {
@@ -292,7 +294,7 @@ class _FocusBarState extends State<FocusBar> {
       ..text = _formatDuration(_remaining)
       ..selection = TextSelection(baseOffset: 0, extentOffset: _timerController.text.length);
     FocusScope.of(context).requestFocus(_timerFocusNode);
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   void _resetTimer() {
@@ -307,7 +309,7 @@ class _FocusBarState extends State<FocusBar> {
     _timerController.text = _formatDuration(_remaining);
     _timerFocusNode.unfocus();
     _startCountdown();
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   void _handleTimerTap() {
@@ -352,11 +354,11 @@ class _FocusBarState extends State<FocusBar> {
     setState(() {
       _isAlwaysOnTop = newValue;
     });
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   void _handleFocusTextChanged() {
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayTooltip());
   }
 
   Future<void> _initializeSystemTray() async {
@@ -370,11 +372,14 @@ class _FocusBarState extends State<FocusBar> {
         toolTip: _buildTrayTooltip(),
       );
 
+      _systemTrayReady = true;
+
       await _rebuildSystemTrayMenu(
-        timerLabel: _buildTrayTimerLabel(),
+        statusLabel: _buildTrayStatusLabel(),
         focusLabel: _buildTrayFocusLabel(),
         attachLabel: _buildTrayAttachLabel(),
         monitorLabel: _buildTrayMonitorLabel(),
+        playPauseLabel: _isPaused ? 'Start timer' : 'Pause timer',
       );
 
       _systemTray.registerSystemTrayEventHandler((eventName) async {
@@ -389,9 +394,8 @@ class _FocusBarState extends State<FocusBar> {
         }
       });
 
-      _systemTrayReady = true;
       await _updateWindowPosition();
-      await _updateSystemTrayContent();
+      await _updateSystemTrayState();
     } catch (error) {
       if (kDebugMode) {
         debugPrint('System tray init failed: $error');
@@ -399,7 +403,7 @@ class _FocusBarState extends State<FocusBar> {
     }
   }
 
-  Future<void> _updateSystemTrayContent() async {
+  Future<void> _updateSystemTrayTooltip() async {
     if (!_systemTrayReady) {
       return;
     }
@@ -412,43 +416,70 @@ class _FocusBarState extends State<FocusBar> {
       );
       _lastTrayTooltip = tooltip;
     }
+  }
 
-    final timerLabel = _buildTrayTimerLabel();
+  Future<void> _updateSystemTrayState() async {
+    if (!_systemTrayReady) {
+      return;
+    }
+
+    await _updateSystemTrayTooltip();
+
+    final statusLabel = _buildTrayStatusLabel();
     final focusLabel = _buildTrayFocusLabel();
     final attachLabel = _buildTrayAttachLabel();
     final monitorLabel = _buildTrayMonitorLabel();
+    final playPauseLabel = _isFlashing || _remaining == Duration.zero
+        ? 'Restart focus session'
+        : _isPaused
+            ? 'Start timer'
+            : 'Pause timer';
 
-    final labelsChanged = timerLabel != _lastTrayTimerLabel ||
+    final changed = statusLabel != _lastTrayStatusLabel ||
         focusLabel != _lastTrayFocusLabel ||
         attachLabel != _lastTrayAttachLabel ||
-        monitorLabel != _lastTrayMonitorLabel;
+        monitorLabel != _lastTrayMonitorLabel ||
+        playPauseLabel != _lastTrayPlayPauseLabel;
 
-    if (labelsChanged) {
+    if (changed) {
       await _rebuildSystemTrayMenu(
-        timerLabel: timerLabel,
+        statusLabel: statusLabel,
         focusLabel: focusLabel,
         attachLabel: attachLabel,
         monitorLabel: monitorLabel,
+        playPauseLabel: playPauseLabel,
       );
     }
   }
 
   Future<void> _rebuildSystemTrayMenu({
-    required String timerLabel,
+    required String statusLabel,
     required String focusLabel,
     required String attachLabel,
     required String monitorLabel,
+    required String playPauseLabel,
   }) async {
     final menuItems = <MenuItemBase>[
       MenuItemLabel(
-        label: timerLabel,
+        label: statusLabel,
         enabled: false,
-        name: 'timer',
+        name: 'status',
       ),
       MenuItemLabel(
         label: focusLabel,
         enabled: false,
         name: 'focus',
+      ),
+      MenuSeparator(),
+      MenuItemLabel(
+        label: playPauseLabel,
+        onClicked: (_) => _handleControlTap(),
+        name: 'play-pause',
+      ),
+      MenuItemLabel(
+        label: 'Restart session (25:00)',
+        onClicked: (_) => _resetTimer(),
+        name: 'reset-timer',
       ),
       MenuItemLabel(
         label: attachLabel,
@@ -462,9 +493,12 @@ class _FocusBarState extends State<FocusBar> {
       ),
       MenuSeparator(),
       MenuItemLabel(
-        label: 'Show',
+        label: 'Show Bar',
         onClicked: (_) async {
-          await windowManager.show();
+          final isVisible = await windowManager.isVisible();
+          if (!isVisible) {
+            await windowManager.show();
+          }
           await windowManager.focus();
         },
         name: 'show',
@@ -481,13 +515,22 @@ class _FocusBarState extends State<FocusBar> {
     await _trayMenu.buildFrom(menuItems);
     await _systemTray.setContextMenu(_trayMenu);
 
-    _lastTrayTimerLabel = timerLabel;
+    _lastTrayStatusLabel = statusLabel;
     _lastTrayFocusLabel = focusLabel;
     _lastTrayAttachLabel = attachLabel;
     _lastTrayMonitorLabel = monitorLabel;
+    _lastTrayPlayPauseLabel = playPauseLabel;
   }
 
-  String _buildTrayTimerLabel() => 'Timer: ${_formatDuration(_remaining)}';
+  String _buildTrayStatusLabel() {
+    if (_isFlashing || _remaining == Duration.zero) {
+      return 'Status: Session Complete!';
+    }
+    if (_isPaused) {
+      return 'Status: Paused (${_formatDuration(_remaining)})';
+    }
+    return 'Status: Focus Session Running';
+  }
 
   String _buildTrayAttachLabel() =>
       _attachTop ? 'Attach to bottom' : 'Attach to top';
@@ -502,7 +545,7 @@ class _FocusBarState extends State<FocusBar> {
   Future<void> _toggleAttachPosition() async {
     _attachTop = !_attachTop;
     await _updateWindowPosition();
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   Future<void> _updateWindowPosition() async {
@@ -587,7 +630,7 @@ class _FocusBarState extends State<FocusBar> {
     _timerFocusNode.unfocus();
     _timerController.text = _formatDuration(_remaining);
     _startCountdown();
-    unawaited(_updateSystemTrayContent());
+    unawaited(_updateSystemTrayState());
   }
 
   Duration? _parseDuration(String value) {

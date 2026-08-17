@@ -24,6 +24,11 @@ Add multi-monitor detection and dynamic monitor switching support to Task Monito
 ### C. Width Collapsing on GTK
 - Calling `setResizable(false)` on GTK caused GTK to collapse the window width down to the widget's minimal preferred size rather than maintaining the multi-monitor width request.
 
+### D. System Tray Menu Disappearing / Glitching (DBus Race Condition)
+- **Root Cause**: The 1-second countdown timer interval was updating the menu item timer label (`Timer: 24:59`, `Timer: 24:58`, etc.), calling `_trayMenu.buildFrom()` and `_systemTray.setContextMenu()` every second.
+- On Linux (GNOME Shell AppIndicator), tearing down and recreating the DBus menu hierarchy every single second destroyed the active menu popup mid-click / mid-hover, leaving behind a blank/empty outline or failing to render.
+- **Fix**: Decoupled tooltip updates (`setSystemTrayInfo`) from context menu rebuilds (`setContextMenu`). The live countdown is displayed in the tray icon hover tooltip, while the context menu retains stable action items (`Pause/Start Timer`, `Restart Session`, `Attach Top/Bottom`, `Switch Monitor`, `Show Bar`, `Quit`) and is only updated on actual state transitions.
+
 ---
 
 ## 3. Implementation Details
@@ -40,6 +45,7 @@ Add multi-monitor detection and dynamic monitor switching support to Task Monito
 3. **Full-Bleed FocusBar**: Replaced the inner 50px `SizedBox` with a full-bleed `Container` filling 100% of the Scaffold background.
 4. **Constraint Management**: Applied strict `min_width == max_width == monitor_width` and `min_height == max_height == 50` geometry constraints for each screen without calling `setResizable(false)` that collapsed width.
 5. **UI & Prefix**: Shortened prefix label to `CF: ` and added an on-bar monitor switch button (`Icons.desktop_windows_outlined`) and tray menu item.
+6. **System Tray Stability**: Decoupled hover tooltip updates from DBus context menu rebuilds, ensuring persistent, glitch-free tray menus on GNOME AppIndicator.
 
 ### Tests (`test/widget_test.dart`)
 - Updated widget test assertions to match the `CF:` prefix.
@@ -49,4 +55,5 @@ Add multi-monitor detection and dynamic monitor switching support to Task Monito
 ## 4. Verification & Results
 - Verified with `xwininfo`: Window geometry matches exactly `2494x50+1146+32` on the landscape monitor (50px height, full visible width).
 - Verified multi-monitor cycling across landscape (2560px) and vertical (1080px) monitors without distortion or extra canvas boxes.
+- Verified system tray: Menu is created once and remains stable without continuous DBus teardowns; tooltip updates smoothly every second.
 - `flutter analyze` and `flutter test` passed with 0 errors.
