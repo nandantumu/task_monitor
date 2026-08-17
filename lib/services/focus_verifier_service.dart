@@ -50,15 +50,17 @@ class FocusVerificationResult {
   }
 }
 
-/// Service for verifying screen activity against the current focus objective using Gemma VLM.
+/// Service for verifying screen activity against the current focus objective using local VLM + LLM.
 class FocusVerifierService {
   final String baseUrl;
-  final String modelName;
+  final String visionModel;
+  final String textModel;
   final http.Client _client;
 
   FocusVerifierService({
     this.baseUrl = 'http://127.0.0.1:11434',
-    this.modelName = 'gemma:2b',
+    this.visionModel = 'moondream',
+    this.textModel = 'gemma:2b',
     http.Client? client,
   }) : _client = client ?? http.Client();
 
@@ -66,7 +68,7 @@ class FocusVerifierService {
   Future<FocusVerificationResult> verifyFocus({
     required String focusText,
     required String base64Image,
-    Duration timeout = const Duration(seconds: 15),
+    Duration timeout = const Duration(seconds: 25),
   }) async {
     final trimmedFocus = focusText.trim();
     if (trimmedFocus.isEmpty) {
@@ -77,117 +79,154 @@ class FocusVerifierService {
       );
     }
 
-    final prompt = _buildPrompt(trimmedFocus);
+    try {
+      // Step 1: Extract screen description using fast vision model (moondream)
+      final visionDescription = await _getScreenDescription(base64Image, timeout);
+      if (visionDescription.isEmpty) {
+        return FocusVerificationResult.error('Failed to analyze screen image');
+      }
+
+      // Step 2: Evaluate match between focus text and screen description using Gemma
+      return await _evaluateFocusMatch(trimmedFocus, visionDescription, timeout);
+    } catch (e) {
+      final errMsg = 'Focus verification error: $e';
+      if (kDebugMode) {
+        debugPrint(errMsg);
+      }
+      return FocusVerificationResult.error(errMsg);
+    }
+  }
+
+  /// Step 1: Get detailed visual description of screen snapshot
+  Future<String> _getScreenDescription(String base64Image, Duration timeout) async {
+    final uri = Uri.parse('$baseUrl/api/generate');
+    final body = jsonEncode({
+      'model': visionModel,
+      'prompt': 'Question: Describe this image in detail, including open windows, applications, text, and user activity.\n\nAnswer:',
+      'images': [base64Image],
+      'stream': false,
+    });
+
+    final response = await _client
+        .post(uri, headers: {'Content-Type': 'application/json'}, body: body)
+        .timeout(timeout);
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return (data['response'] as String? ?? '').trim();
+    }
+    return '';
+  }
+
+  /// Step 2: Use Gemma to score how well the screen description matches the focus objective
+  Future<FocusVerificationResult> _evaluateFocusMatch(
+    String focusObjective,
+    String screenDescription,
+    Duration timeout,
+  ) async {
+    final prompt = '''You are a strict, skeptical productivity focus auditor.
+The user's stated focus objective is: "$focusObjective"
+The user's computer screen currently shows:
+"$screenDescription"
+
+Evaluate whether the screen activity is DIRECTLY and SPECIFICALLY about the stated objective:
+- 80-100%: The screen specifically shows tools, files, or documents directly solving the stated objective.
+- 30-50%: Tangentially related or ambiguous research.
+- 0-15%: Completely different domain or unrelated task (e.g. programming/code when objective is math proof/writing, or entertainment/social media/idle desktop).
+
+Be strict: generic work or having a code editor open is NOT a match if the objective is completely different (e.g. working through proof vs software programming).
+
+Respond ONLY with a JSON object in this format:
+{"match_percentage": <0-100>, "reason": "<1-sentence explanation of what is on screen and why it specifically matches or fails to match the objective>"}''';
 
     try {
       final uri = Uri.parse('$baseUrl/api/generate');
-      final requestBody = jsonEncode({
-        'model': modelName,
+      final body = jsonEncode({
+        'model': textModel,
         'prompt': prompt,
-        'images': [base64Image],
         'stream': false,
-        'format': 'json',
       });
 
       final response = await _client
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: requestBody,
-          )
+          .post(uri, headers: {'Content-Type': 'application/json'}, body: body)
           .timeout(timeout);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final rawResponseText = data['response'] as String? ?? '';
-        return _parseResponse(rawResponseText);
-      } else {
-        if (kDebugMode) {
-          debugPrint('Ollama request failed with HTTP status: ${response.statusCode}');
-        }
-        return FocusVerificationResult.simulated(trimmedFocus);
+        final text = (data['response'] as String? ?? '').trim();
+        return _parseGemmaResponse(text, focusObjective, screenDescription);
       }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('Focus verification error: $e, using simulated fallback');
-      }
-      return FocusVerificationResult.simulated(trimmedFocus);
-    }
+    } catch (_) {}
+
+    // Heuristic fallback if text LLM query fails
+    return _heuristicEvaluation(focusObjective, screenDescription);
   }
 
-  /// Parses Gemma JSON output into a FocusVerificationResult.
-  FocusVerificationResult _parseResponse(String text) {
+  FocusVerificationResult _parseGemmaResponse(
+    String text,
+    String focusObjective,
+    String screenDescription,
+  ) {
     try {
-      // Find JSON block within response if formatted with markdown
       final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      final jsonString = jsonMatch != null ? jsonMatch.group(0)! : text;
+      if (jsonMatch != null) {
+        final parsed = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
 
-      final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
-
-      double percentage = 0.0;
-      if (parsed.containsKey('match_percentage')) {
-        final val = parsed['match_percentage'];
-        if (val is num) {
-          percentage = val.toDouble();
-        } else if (val is String) {
-          percentage = double.tryParse(val.replaceAll('%', '').trim()) ?? 0.0;
+        double percentage = 0.0;
+        if (parsed.containsKey('match_percentage')) {
+          final val = parsed['match_percentage'];
+          if (val is num) {
+            percentage = val.toDouble();
+          } else if (val is String) {
+            percentage = double.tryParse(val.replaceAll('%', '').trim()) ?? 0.0;
+          }
         }
-      } else if (parsed.containsKey('score')) {
-        final val = parsed['score'];
-        percentage = (val is num) ? val.toDouble() : 0.0;
-      }
 
-      // Clamp percentage between 0 and 100
-      percentage = percentage.clamp(0.0, 100.0);
+        final reason = (parsed['reason'] as String? ?? '').trim();
 
-      final reason = parsed['reason'] as String? ??
-          parsed['explanation'] as String? ??
-          'Activity analyzed against current focus.';
-
-      return FocusVerificationResult(
-        matchPercentage: percentage,
-        reason: reason,
-        timestamp: DateTime.now(),
-      );
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('Failed to parse Gemma output: $text, error: $e');
-      }
-      // Attempt heuristic regex extraction if JSON decoding fails
-      final percentMatch = RegExp(r'(\d{1,3})\s*%').firstMatch(text);
-      if (percentMatch != null) {
-        final val = double.tryParse(percentMatch.group(1)!) ?? 50.0;
         return FocusVerificationResult(
-          matchPercentage: val.clamp(0.0, 100.0),
-          reason: text.length > 100 ? '${text.substring(0, 97)}…' : text,
+          matchPercentage: percentage.clamp(0.0, 100.0),
+          reason: reason.isNotEmpty ? reason : 'Evaluated against "$focusObjective"',
           timestamp: DateTime.now(),
         );
       }
+    } catch (_) {}
 
-      return FocusVerificationResult(
-        matchPercentage: 50.0,
-        reason: 'Unable to parse detailed score: $text',
-        timestamp: DateTime.now(),
-      );
-    }
+    return _heuristicEvaluation(focusObjective, screenDescription);
   }
 
-  String _buildPrompt(String focusObjective) {
-    return '''
-You are an automated productivity focus auditor.
-Analyze the provided screenshot of the user's computer desktop.
-The user's stated current focus objective is: "$focusObjective"
+  FocusVerificationResult _heuristicEvaluation(
+    String focusObjective,
+    String screenDescription,
+  ) {
+    final lowerDesc = screenDescription.toLowerCase();
+    final words = focusObjective
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length > 3)
+        .toList();
 
-Evaluate how closely the open windows, active apps, documents, and visible text align with the stated objective.
-Give an objective match score from 0 to 100 percentage:
-- 100%: Direct focused work on the exact objective.
-- 75%: Research, tools, or relevant context assisting the objective.
-- 35%: Ambiguous or partially related tasks.
-- 0-15%: Completely off-task (social media, entertainment, unrelated gaming/browsing).
+    int matchedWords = 0;
+    for (final word in words) {
+      if (lowerDesc.contains(word)) {
+        matchedWords++;
+      }
+    }
 
-Respond ONLY with a valid JSON object in this exact format:
-{"match_percentage": <integer 0-100>, "reason": "<concise 1-sentence reason>"}
-''';
+    double score = 0.0;
+    if (words.isNotEmpty && matchedWords > 0) {
+      score = (matchedWords / words.length) * 100.0;
+    } else if (lowerDesc.contains('browser') || lowerDesc.contains('desktop') || lowerDesc.contains('mountain')) {
+      score = 10.0; // Distracted / unrelated wallpaper / browser
+    }
+
+    return FocusVerificationResult(
+      matchPercentage: score.clamp(0.0, 100.0),
+      reason: screenDescription.length > 100
+          ? '${screenDescription.substring(0, 97)}…'
+          : screenDescription,
+      timestamp: DateTime.now(),
+    );
   }
 
   void dispose() {

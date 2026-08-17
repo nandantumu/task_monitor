@@ -85,7 +85,7 @@ void main() {
       expect(result.isHighMatch, isTrue);
     });
 
-    test('falls back to simulation if endpoint is unreachable', () async {
+    test('returns error result if endpoint is unreachable', () async {
       final mockClient = MockClient((request) async {
         throw Exception('Connection refused');
       });
@@ -96,8 +96,9 @@ void main() {
         base64Image: 'dGVzdA==',
       );
 
-      expect(result.isSuccess, isTrue);
-      expect(result.matchPercentage, 85.0);
+      expect(result.isSuccess, isFalse);
+      expect(result.matchPercentage, 0.0);
+      expect(result.reason, contains('Connection refused'));
     });
 
     test('handles empty focus text gracefully', () async {
