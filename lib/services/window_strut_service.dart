@@ -282,7 +282,6 @@ class WindowStrutService {
       );
 
       final strutPartialStr = calc.strutPartial.join(', ');
-      final strutStr = calc.strut.join(', ');
 
       await Process.run('xprop', [
         '-id',
@@ -295,6 +294,9 @@ class WindowStrutService {
         '_NET_WM_WINDOW_TYPE_DOCK',
       ], environment: Platform.environment);
 
+      // Remove legacy 4-element strut so only the partial region beside the dock is affected
+      await Process.run('xprop', ['-id', wid, '-remove', '_NET_WM_STRUT'], environment: Platform.environment);
+
       await Process.run('xprop', [
         '-id',
         wid,
@@ -304,17 +306,6 @@ class WindowStrutService {
         '-set',
         '_NET_WM_STRUT_PARTIAL',
         strutPartialStr,
-      ], environment: Platform.environment);
-
-      await Process.run('xprop', [
-        '-id',
-        wid,
-        '-f',
-        '_NET_WM_STRUT',
-        '32c',
-        '-set',
-        '_NET_WM_STRUT',
-        strutStr,
       ], environment: Platform.environment);
 
       return true;
