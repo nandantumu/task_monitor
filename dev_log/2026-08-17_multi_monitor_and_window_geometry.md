@@ -38,6 +38,7 @@ Add multi-monitor detection and dynamic monitor switching support to Task Monito
 2. **Widget Size Request**: Set `gtk_widget_set_size_request(GTK_WIDGET(window), -1, 50)` and `gtk_widget_set_size_request(GTK_WIDGET(view), -1, 50)` so GTK respects the 50px height while leaving width unconstrained for dynamic monitor resizing.
 3. **RGBA Visual**: Enabled `gdk_screen_get_rgba_visual` for proper alpha channel and transparency compositing.
 4. **Header Bar Removal**: Removed GTK client-side decoration header bar for a clean borderless window.
+5. **Window Icon**: Programmatically loaded the bundled 1024x1024 icon via `gtk_window_set_icon_from_file` so window managers and task switchers display the custom icon.
 
 ### Dart Application (`lib/main.dart`)
 1. **Display Tracking**: Maintained active monitor list and index via `ScreenRetriever`, supporting cycling across connected displays.
@@ -46,6 +47,11 @@ Add multi-monitor detection and dynamic monitor switching support to Task Monito
 4. **Constraint Management**: Applied strict `min_width == max_width == monitor_width` and `min_height == max_height == 50` geometry constraints for each screen without calling `setResizable(false)` that collapsed width.
 5. **UI & Prefix**: Shortened prefix label to `CF: ` and added an on-bar monitor switch button (`Icons.desktop_windows_outlined`) and tray menu item.
 6. **System Tray Stability**: Decoupled hover tooltip updates from DBus context menu rebuilds, ensuring persistent, glitch-free tray menus on GNOME AppIndicator.
+
+### Local Installation & Desktop Entry
+- Release bundle built and installed to `~/.local/lib/task_monitor/` with executable symlinked to `~/.local/bin/task_monitor`.
+- High-res icons installed into standard XDG directories: `~/.local/share/icons/hicolor/1024x1024/apps/`, `~/.local/share/pixmaps/`, and `~/.icons/`.
+- Validated desktop entry created at `~/.local/share/applications/com.example.task_monitor.desktop` with `StartupWMClass=com.example.task_monitor` to map running windows to the custom dock icon.
 
 ### Tests (`test/widget_test.dart`)
 - Updated widget test assertions to match the `CF:` prefix.
@@ -56,4 +62,5 @@ Add multi-monitor detection and dynamic monitor switching support to Task Monito
 - Verified with `xwininfo`: Window geometry matches exactly `2494x50+1146+32` on the landscape monitor (50px height, full visible width).
 - Verified multi-monitor cycling across landscape (2560px) and vertical (1080px) monitors without distortion or extra canvas boxes.
 - Verified system tray: Menu is created once and remains stable without continuous DBus teardowns; tooltip updates smoothly every second.
+- Verified release build and local desktop launcher integration with full icon association.
 - `flutter analyze` and `flutter test` passed with 0 errors.
