@@ -523,6 +523,8 @@ class _FocusBarState extends State<FocusBar> {
       final result = await _focusVerifier.verifyFocus(
         focusText: _focusController.text,
         base64Image: capture.base64Image,
+        activeWindowTitle: capture.activeWindowTitle,
+        openWindowTitles: capture.openWindowTitles,
       );
 
       if (!mounted || !_isAiAuditEnabled) {

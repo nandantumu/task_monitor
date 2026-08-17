@@ -68,6 +68,8 @@ class FocusVerifierService {
   Future<FocusVerificationResult> verifyFocus({
     required String focusText,
     required String base64Image,
+    String activeWindowTitle = '',
+    List<String> openWindowTitles = const [],
     Duration timeout = const Duration(seconds: 25),
   }) async {
     final trimmedFocus = focusText.trim();
@@ -82,12 +84,15 @@ class FocusVerifierService {
     try {
       // Step 1: Extract screen description using fast vision model (moondream)
       final visionDescription = await _getScreenDescription(base64Image, timeout);
-      if (visionDescription.isEmpty) {
-        return FocusVerificationResult.error('Failed to analyze screen image');
-      }
 
-      // Step 2: Evaluate match between focus text and screen description using Gemma
-      return await _evaluateFocusMatch(trimmedFocus, visionDescription, timeout);
+      // Step 2: Evaluate match between focus text and desktop state using Gemma
+      return await _evaluateFocusMatch(
+        trimmedFocus,
+        activeWindowTitle,
+        openWindowTitles,
+        visionDescription,
+        timeout,
+      );
     } catch (e) {
       final errMsg = 'Focus verification error: $e';
       if (kDebugMode) {
@@ -99,45 +104,61 @@ class FocusVerifierService {
 
   /// Step 1: Get detailed visual description of screen snapshot
   Future<String> _getScreenDescription(String base64Image, Duration timeout) async {
-    final uri = Uri.parse('$baseUrl/api/generate');
-    final body = jsonEncode({
-      'model': visionModel,
-      'prompt': 'Question: Describe this image in detail, including open windows, applications, text, and user activity.\n\nAnswer:',
-      'images': [base64Image],
-      'stream': false,
-    });
+    try {
+      final uri = Uri.parse('$baseUrl/api/generate');
+      final body = jsonEncode({
+        'model': visionModel,
+        'prompt': 'Question: Describe this image in detail, including open windows, applications, text, and user activity.\n\nAnswer:',
+        'images': [base64Image],
+        'stream': false,
+      });
 
-    final response = await _client
-        .post(uri, headers: {'Content-Type': 'application/json'}, body: body)
-        .timeout(timeout);
+      final response = await _client
+          .post(uri, headers: {'Content-Type': 'application/json'}, body: body)
+          .timeout(timeout);
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      return (data['response'] as String? ?? '').trim();
-    }
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return (data['response'] as String? ?? '').trim();
+      }
+    } catch (_) {}
     return '';
   }
 
-  /// Step 2: Use Gemma to score how well the screen description matches the focus objective
+  /// Step 2: Use Gemma with verdict-first chain-of-thought to score focus match
   Future<FocusVerificationResult> _evaluateFocusMatch(
     String focusObjective,
+    String activeWindowTitle,
+    List<String> openWindowTitles,
     String screenDescription,
     Duration timeout,
   ) async {
+    final windowSummary = [
+      if (activeWindowTitle.isNotEmpty) 'Active Window: "$activeWindowTitle"',
+      if (openWindowTitles.isNotEmpty)
+        'Open Desktop Windows: ${openWindowTitles.map((t) => '"$t"').join(', ')}',
+    ].join('\n');
+
     final prompt = '''You are a strict, skeptical productivity focus auditor.
-The user's stated focus objective is: "$focusObjective"
-The user's computer screen currently shows:
+
+USER FOCUS OBJECTIVE: "$focusObjective"
+
+DESKTOP WINDOWS & APPLICATIONS:
+$windowSummary
+
+VISUAL SCREEN DESCRIPTION:
 "$screenDescription"
 
-Evaluate whether the screen activity is DIRECTLY and SPECIFICALLY about the stated objective:
-- 80-100%: The screen specifically shows tools, files, or documents directly solving the stated objective.
-- 30-50%: Tangentially related or ambiguous research.
-- 0-15%: Completely different domain or unrelated task (e.g. programming/code when objective is math proof/writing, or entertainment/social media/idle desktop).
+YOUR TASK:
+Determine if the user is actively working on the objective ("$focusObjective").
+- If the active window or open documents/tools are completely unrelated (e.g. IDE/terminal vs math proof, or social media/gaming/random browsing), mark verdict as NO.
+- If the user is actively using tools/files directly matching the objective, mark verdict as YES.
+- If ambiguous or partially related research, mark verdict as PARTIAL.
 
-Be strict: generic work or having a code editor open is NOT a match if the objective is completely different (e.g. working through proof vs software programming).
-
-Respond ONLY with a JSON object in this format:
-{"match_percentage": <0-100>, "reason": "<1-sentence explanation of what is on screen and why it specifically matches or fails to match the objective>"}''';
+FORMAT YOUR RESPONSE EXACTLY AS:
+Verdict: [YES/NO/PARTIAL]
+Reason: [1-sentence explanation of what is open and why it matches or does not match]
+Score: [0-100] (Rules: If NO -> 0-15. If PARTIAL -> 25-45. If YES -> 75-100)''';
 
     try {
       final uri = Uri.parse('$baseUrl/api/generate');
@@ -154,52 +175,73 @@ Respond ONLY with a JSON object in this format:
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final text = (data['response'] as String? ?? '').trim();
-        return _parseGemmaResponse(text, focusObjective, screenDescription);
+        return _parseVerdictResponse(text, focusObjective, screenDescription);
+      } else {
+        return FocusVerificationResult.error('Ollama HTTP ${response.statusCode}');
       }
-    } catch (_) {}
-
-    // Heuristic fallback if text LLM query fails
-    return _heuristicEvaluation(focusObjective, screenDescription);
+    } catch (e) {
+      return FocusVerificationResult.error('Connection error: $e');
+    }
   }
 
-  FocusVerificationResult _parseGemmaResponse(
+  FocusVerificationResult _parseVerdictResponse(
     String text,
     String focusObjective,
     String screenDescription,
   ) {
     try {
-      final jsonMatch = RegExp(r'\{[\s\S]*\}').firstMatch(text);
-      if (jsonMatch != null) {
-        final parsed = jsonDecode(jsonMatch.group(0)!) as Map<String, dynamic>;
-
-        double percentage = 0.0;
-        if (parsed.containsKey('match_percentage')) {
-          final val = parsed['match_percentage'];
-          if (val is num) {
-            percentage = val.toDouble();
-          } else if (val is String) {
-            percentage = double.tryParse(val.replaceAll('%', '').trim()) ?? 0.0;
-          }
-        }
-
-        final reason = (parsed['reason'] as String? ?? '').trim();
-
-        return FocusVerificationResult(
-          matchPercentage: percentage.clamp(0.0, 100.0),
-          reason: reason.isNotEmpty ? reason : 'Evaluated against "$focusObjective"',
-          timestamp: DateTime.now(),
-        );
+      final upper = text.toUpperCase();
+      String? verdict;
+      if (upper.contains('VERDICT: YES') || upper.contains('VERDICT:YES') || upper.contains('**VERDICT: YES**')) {
+        verdict = 'YES';
+      } else if (upper.contains('VERDICT: NO') || upper.contains('VERDICT:NO') || upper.contains('**VERDICT: NO**')) {
+        verdict = 'NO';
+      } else if (upper.contains('VERDICT: PARTIAL') || upper.contains('VERDICT:PARTIAL') || upper.contains('**VERDICT: PARTIAL**')) {
+        verdict = 'PARTIAL';
       }
+
+      // Extract Reason
+      String reason = '';
+      final reasonMatch = RegExp(r'Reason:\s*(.+?)(?=\n|Score:|$)', caseSensitive: false).firstMatch(text);
+      if (reasonMatch != null) {
+        reason = reasonMatch.group(1)!.trim().replaceAll('*', '');
+      }
+
+      // Extract Score
+      double score = 50.0;
+      final scoreMatch = RegExp(r'Score:\s*(\d{1,3})', caseSensitive: false).firstMatch(text);
+      if (scoreMatch != null) {
+        score = double.tryParse(scoreMatch.group(1)!) ?? 50.0;
+      }
+
+      // Enforce verdict constraints to prevent small-model hallucination inversions
+      if (verdict == 'NO') {
+        score = score.clamp(0.0, 15.0);
+        if (reason.isEmpty) reason = 'Activity on screen does not match "$focusObjective".';
+      } else if (verdict == 'YES') {
+        score = score.clamp(75.0, 100.0);
+        if (reason.isEmpty) reason = 'Activity matches "$focusObjective".';
+      } else if (verdict == 'PARTIAL') {
+        score = score.clamp(25.0, 45.0);
+        if (reason.isEmpty) reason = 'Activity partially relates to "$focusObjective".';
+      }
+
+      return FocusVerificationResult(
+        matchPercentage: score,
+        reason: reason.isNotEmpty ? reason : 'Evaluated against "$focusObjective"',
+        timestamp: DateTime.now(),
+      );
     } catch (_) {}
 
-    return _heuristicEvaluation(focusObjective, screenDescription);
+    return _heuristicEvaluation(focusObjective, screenDescription, const []);
   }
 
   FocusVerificationResult _heuristicEvaluation(
     String focusObjective,
     String screenDescription,
+    List<String> openWindows,
   ) {
-    final lowerDesc = screenDescription.toLowerCase();
+    final lowerDesc = '${screenDescription.toLowerCase()} ${openWindows.join(' ').toLowerCase()}';
     final words = focusObjective
         .toLowerCase()
         .split(RegExp(r'\s+'))
@@ -216,15 +258,13 @@ Respond ONLY with a JSON object in this format:
     double score = 0.0;
     if (words.isNotEmpty && matchedWords > 0) {
       score = (matchedWords / words.length) * 100.0;
-    } else if (lowerDesc.contains('browser') || lowerDesc.contains('desktop') || lowerDesc.contains('mountain')) {
-      score = 10.0; // Distracted / unrelated wallpaper / browser
+    } else {
+      score = 10.0; // Distracted / unrelated
     }
 
     return FocusVerificationResult(
       matchPercentage: score.clamp(0.0, 100.0),
-      reason: screenDescription.length > 100
-          ? '${screenDescription.substring(0, 97)}…'
-          : screenDescription,
+      reason: 'Desktop windows evaluated against: "$focusObjective"',
       timestamp: DateTime.now(),
     );
   }

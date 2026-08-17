@@ -2,16 +2,20 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 
-/// Holds the captured screen data.
+/// Holds the captured screen data and active desktop context.
 class ScreenCaptureResult {
   final String base64Image;
   final List<int> bytes;
   final String format;
+  final String activeWindowTitle;
+  final List<String> openWindowTitles;
 
   const ScreenCaptureResult({
     required this.base64Image,
     required this.bytes,
     this.format = 'jpeg',
+    this.activeWindowTitle = '',
+    this.openWindowTitles = const [],
   });
 }
 
@@ -45,6 +49,14 @@ class ScreenCaptureService {
         return null;
       }
 
+      // Collect desktop window titles on Linux for ground-truth context
+      var activeTitle = '';
+      var openTitles = <String>[];
+      if (Platform.isLinux) {
+        activeTitle = await _getActiveWindowTitleLinux();
+        openTitles = await _getOpenWindowTitlesLinux();
+      }
+
       // Downscale image if 'convert' or 'ffmpeg' is available to accelerate VLM inference
       final finalFile = await _downscaleImage(rawPath, scaledPath, targetWidth, quality);
       final bytes = await finalFile.readAsBytes();
@@ -58,7 +70,7 @@ class ScreenCaptureService {
         if (File(scaledPath).existsSync() && scaledPath != finalFile.path) {
           File(scaledPath).deleteSync();
         }
-        if (finalFile.existsSync()) {
+        if (finalFile.existsSync() && finalFile.path != rawPath && finalFile.path != scaledPath) {
           finalFile.deleteSync();
         }
       } catch (_) {}
@@ -66,14 +78,60 @@ class ScreenCaptureService {
       return ScreenCaptureResult(
         base64Image: base64String,
         bytes: bytes,
-        format: 'jpeg',
+        activeWindowTitle: activeTitle,
+        openWindowTitles: openTitles,
       );
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('Error during screen capture: $e');
+        debugPrint('Screen capture error: $e');
       }
       return null;
     }
+  }
+
+  static Future<String> _getActiveWindowTitleLinux() async {
+    try {
+      final res = await Process.run('xprop', ['-root', '_NET_ACTIVE_WINDOW']);
+      if (res.exitCode == 0) {
+        final match = RegExp(r'0x[0-9a-fA-F]+').firstMatch(res.stdout.toString());
+        if (match != null) {
+          final winId = match.group(0)!;
+          final propRes = await Process.run('xprop', ['-id', winId, '_NET_WM_NAME', 'WM_NAME']);
+          if (propRes.exitCode == 0) {
+            final titleMatch = RegExp(r'=\s*"(.*)"').firstMatch(propRes.stdout.toString());
+            if (titleMatch != null) {
+              return titleMatch.group(1)!.trim();
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  static Future<List<String>> _getOpenWindowTitlesLinux() async {
+    try {
+      final res = await Process.run('xprop', ['-root', '_NET_CLIENT_LIST']);
+      if (res.exitCode == 0) {
+        final matches = RegExp(r'0x[0-9a-fA-F]+').allMatches(res.stdout.toString());
+        final titles = <String>[];
+        for (final m in matches) {
+          final wid = m.group(0)!;
+          final propRes = await Process.run('xprop', ['-id', wid, '_NET_WM_NAME', 'WM_NAME']);
+          if (propRes.exitCode == 0) {
+            final titleMatch = RegExp(r'=\s*"(.*)"').firstMatch(propRes.stdout.toString());
+            if (titleMatch != null) {
+              final title = titleMatch.group(1)!.trim();
+              if (title.isNotEmpty && !title.startsWith('Desktop Icons') && title != 'task_monitor') {
+                titles.add(title);
+              }
+            }
+          }
+        }
+        return titles;
+      }
+    } catch (_) {}
+    return const [];
   }
 
   static Future<bool> _captureLinux(String outputPath) async {

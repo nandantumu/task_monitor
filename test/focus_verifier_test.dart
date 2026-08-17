@@ -61,14 +61,13 @@ void main() {
   });
 
   group('FocusVerifierService', () {
-    test('parses JSON response accurately', () async {
+    test('parses verdict response accurately', () async {
       final mockClient = MockClient((request) async {
         return http.Response(
           jsonEncode({
-            'response': jsonEncode({
-              'match_percentage': 92,
-              'reason': 'Direct match with task requirements',
-            }),
+            'response': '''Verdict: YES
+Reason: Direct match with task requirements
+Score: 92''',
           }),
           200,
         );
@@ -83,6 +82,28 @@ void main() {
       expect(result.matchPercentage, 92.0);
       expect(result.reason, 'Direct match with task requirements');
       expect(result.isHighMatch, isTrue);
+    });
+
+    test('enforces low score on NO verdict', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'response': '''Verdict: NO
+Reason: User is playing games instead of studying
+Score: 80''',
+          }),
+          200,
+        );
+      });
+
+      final service = FocusVerifierService(client: mockClient);
+      final result = await service.verifyFocus(
+        focusText: 'Studying math proof',
+        base64Image: 'dGVzdA==',
+      );
+
+      expect(result.matchPercentage, lessThanOrEqualTo(15.0));
+      expect(result.isLowMatch, isTrue);
     });
 
     test('returns error result if endpoint is unreachable', () async {
