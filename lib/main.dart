@@ -8,9 +8,10 @@ import 'package:screen_retriever/screen_retriever.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'services/focus_verifier_service.dart';
-import 'services/screen_capture_service.dart';
-import 'widgets/focus_pie_chart.dart';
+import 'package:task_monitor/services/focus_verifier_service.dart';
+import 'package:task_monitor/services/screen_capture_service.dart';
+import 'package:task_monitor/widgets/focus_pie_chart.dart';
+import 'package:task_monitor/widgets/focus_verdict_dialog.dart';
 
 const double _focusBarHeight = 50;
 const Duration _sessionDuration = Duration(minutes: 25);
@@ -132,6 +133,7 @@ class _FocusBarState extends State<FocusBar> {
   bool _isAuditing = false;
   double? _focusMatchPercentage;
   String? _focusMatchReason;
+  FocusVerificationResult? _lastFocusResult;
   final Duration _aiAuditInterval = const Duration(minutes: 1);
 
   List<Display> _displays = [];
@@ -532,6 +534,7 @@ class _FocusBarState extends State<FocusBar> {
       }
 
       setState(() {
+        _lastFocusResult = result;
         _focusMatchPercentage = result.matchPercentage;
         _focusMatchReason = result.reason;
         _isAuditing = false;
@@ -550,6 +553,16 @@ class _FocusBarState extends State<FocusBar> {
         });
       }
     }
+  }
+
+  void _showVerdictDialog() {
+    FocusVerdictDialog.show(
+      context,
+      currentFocus: _focusController.text,
+      result: _lastFocusResult,
+      isAuditing: _isAuditing,
+      onReaudit: () => _runAiAudit(immediate: true),
+    );
   }
 
   Future<void> _triggerOffTaskAlert(String reason) async {
@@ -607,12 +620,19 @@ class _FocusBarState extends State<FocusBar> {
         onClicked: (_) => _toggleAiAudit(),
         name: 'toggle-ai',
       ),
-      if (_isAiAuditEnabled)
+      if (_isAiAuditEnabled) ...[
         MenuItemLabel(
           label: 'Audit Screen with Gemma Now',
           onClicked: (_) => _runAiAudit(immediate: true),
           name: 'audit-now',
         ),
+        if (_focusMatchReason != null)
+          MenuItemLabel(
+            label: 'View AI Verdict Reason...',
+            onClicked: (_) => _showVerdictDialog(),
+            name: 'view-verdict-reason',
+          ),
+      ],
       MenuSeparator(),
       MenuItemLabel(
         label: playPauseLabel,
@@ -842,7 +862,7 @@ class _FocusBarState extends State<FocusBar> {
               isEnabled: _isAiAuditEnabled,
               isLoading: _isAuditing,
               tooltipReason: _focusMatchReason,
-              onTap: () => _runAiAudit(immediate: true),
+              onTap: _showVerdictDialog,
             ),
             IconButton(
               tooltip: _isAiAuditEnabled

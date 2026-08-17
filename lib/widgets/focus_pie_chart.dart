@@ -41,8 +41,8 @@ class FocusPieChart extends StatelessWidget {
       return 'Gemma AI: Ready (Click to audit now)';
     }
     final score = percentage!.toStringAsFixed(0);
-    final reason = tooltipReason?.isNotEmpty == true ? '\n$tooltipReason' : '';
-    return 'Gemma Focus Match: $score%$reason\n(Click to re-audit)';
+    final reason = tooltipReason?.isNotEmpty == true ? '\nReason: $tooltipReason' : '';
+    return 'Gemma Focus Match: $score%$reason\n(Click to view verdict & details)';
   }
 
   @override

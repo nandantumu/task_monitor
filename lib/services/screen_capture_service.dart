@@ -89,6 +89,37 @@ class ScreenCaptureService {
     }
   }
 
+  static String _categorizeWindowClass(String wmClass) {
+    final lower = wmClass.toLowerCase();
+    if (lower.contains('code') || lower.contains('cursor') || lower.contains('antigravity') ||
+        lower.contains('idea') || lower.contains('pycharm') || lower.contains('clion') ||
+        lower.contains('sublime') || lower.contains('emacs') || lower.contains('vim')) {
+      return 'Code Editor / IDE';
+    }
+    if (lower.contains('ghostty') || lower.contains('terminal') || lower.contains('kitty') ||
+        lower.contains('alacritty') || lower.contains('xterm') || lower.contains('bash') || lower.contains('zsh')) {
+      return 'Terminal';
+    }
+    if (lower.contains('firefox') || lower.contains('chrome') || lower.contains('chromium') ||
+        lower.contains('brave') || lower.contains('edge') || lower.contains('navigator')) {
+      return 'Web Browser';
+    }
+    if (lower.contains('texstudio') || lower.contains('overleaf') || lower.contains('kile') ||
+        lower.contains('lyx') || lower.contains('xournal') || lower.contains('obsidian') ||
+        lower.contains('libreoffice') || lower.contains('writer') || lower.contains('pdf') ||
+        lower.contains('evince') || lower.contains('okular') || lower.contains('zathura')) {
+      return 'Document / Notes / LaTeX';
+    }
+    if (lower.contains('slack') || lower.contains('discord') || lower.contains('telegram') ||
+        lower.contains('signal') || lower.contains('teams') || lower.contains('zoom')) {
+      return 'Communication';
+    }
+    if (lower.contains('spotify') || lower.contains('vlc') || lower.contains('steam')) {
+      return 'Media / Entertainment';
+    }
+    return '';
+  }
+
   static Future<String> _getActiveWindowTitleLinux() async {
     try {
       final res = await Process.run('xprop', ['-root', '_NET_ACTIVE_WINDOW']);
@@ -96,11 +127,16 @@ class ScreenCaptureService {
         final match = RegExp(r'0x[0-9a-fA-F]+').firstMatch(res.stdout.toString());
         if (match != null) {
           final winId = match.group(0)!;
-          final propRes = await Process.run('xprop', ['-id', winId, '_NET_WM_NAME', 'WM_NAME']);
+          final propRes = await Process.run('xprop', ['-id', winId, '_NET_WM_NAME', 'WM_NAME', 'WM_CLASS']);
           if (propRes.exitCode == 0) {
-            final titleMatch = RegExp(r'=\s*"(.*)"').firstMatch(propRes.stdout.toString());
-            if (titleMatch != null) {
-              return titleMatch.group(1)!.trim();
+            final out = propRes.stdout.toString();
+            final titleMatch = RegExp(r'(?:_NET_WM_NAME|WM_NAME)\s*\(.*?\)\s*=\s*"(.*)"').firstMatch(out);
+            final classMatch = RegExp(r'WM_CLASS\s*\(.*?\)\s*=\s*(.*)').firstMatch(out);
+            final title = titleMatch?.group(1)?.trim() ?? '';
+            final cls = classMatch?.group(1)?.trim() ?? '';
+            final cat = _categorizeWindowClass(cls);
+            if (title.isNotEmpty) {
+              return cat.isNotEmpty ? '$title [$cat]' : title;
             }
           }
         }
@@ -117,14 +153,16 @@ class ScreenCaptureService {
         final titles = <String>[];
         for (final m in matches) {
           final wid = m.group(0)!;
-          final propRes = await Process.run('xprop', ['-id', wid, '_NET_WM_NAME', 'WM_NAME']);
+          final propRes = await Process.run('xprop', ['-id', wid, '_NET_WM_NAME', 'WM_NAME', 'WM_CLASS']);
           if (propRes.exitCode == 0) {
-            final titleMatch = RegExp(r'=\s*"(.*)"').firstMatch(propRes.stdout.toString());
-            if (titleMatch != null) {
-              final title = titleMatch.group(1)!.trim();
-              if (title.isNotEmpty && !title.startsWith('Desktop Icons') && title != 'task_monitor') {
-                titles.add(title);
-              }
+            final out = propRes.stdout.toString();
+            final titleMatch = RegExp(r'(?:_NET_WM_NAME|WM_NAME)\s*\(.*?\)\s*=\s*"(.*)"').firstMatch(out);
+            final classMatch = RegExp(r'WM_CLASS\s*\(.*?\)\s*=\s*(.*)').firstMatch(out);
+            final title = titleMatch?.group(1)?.trim() ?? '';
+            final cls = classMatch?.group(1)?.trim() ?? '';
+            if (title.isNotEmpty && !title.startsWith('Desktop Icons') && title != 'task_monitor') {
+              final cat = _categorizeWindowClass(cls);
+              titles.add(cat.isNotEmpty ? '$title [$cat]' : title);
             }
           }
         }

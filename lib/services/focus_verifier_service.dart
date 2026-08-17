@@ -8,6 +8,8 @@ class FocusVerificationResult {
   final String reason;
   final bool isSuccess;
   final String? errorMessage;
+  final String activeWindowTitle;
+  final List<String> openWindowTitles;
   final DateTime timestamp;
 
   const FocusVerificationResult({
@@ -15,6 +17,8 @@ class FocusVerificationResult {
     required this.reason,
     this.isSuccess = true,
     this.errorMessage,
+    this.activeWindowTitle = '',
+    this.openWindowTitles = const [],
     required this.timestamp,
   });
 
@@ -33,7 +37,6 @@ class FocusVerificationResult {
   }
 
   factory FocusVerificationResult.simulated(String focusText) {
-    // Deterministic simulation based on text length for testing/offline environments
     final trimmed = focusText.trim();
     if (trimmed.isEmpty) {
       return FocusVerificationResult(
@@ -175,7 +178,13 @@ Score: [0-100] (Rules: If NO -> 0-15. If PARTIAL -> 25-45. If YES -> 75-100)''';
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         final text = (data['response'] as String? ?? '').trim();
-        return _parseVerdictResponse(text, focusObjective, screenDescription);
+        return _parseVerdictResponse(
+          text,
+          focusObjective,
+          screenDescription,
+          activeWindowTitle,
+          openWindowTitles,
+        );
       } else {
         return FocusVerificationResult.error('Ollama HTTP ${response.statusCode}');
       }
@@ -188,6 +197,8 @@ Score: [0-100] (Rules: If NO -> 0-15. If PARTIAL -> 25-45. If YES -> 75-100)''';
     String text,
     String focusObjective,
     String screenDescription,
+    String activeWindowTitle,
+    List<String> openWindowTitles,
   ) {
     try {
       final upper = text.toUpperCase();
@@ -229,11 +240,13 @@ Score: [0-100] (Rules: If NO -> 0-15. If PARTIAL -> 25-45. If YES -> 75-100)''';
       return FocusVerificationResult(
         matchPercentage: score,
         reason: reason.isNotEmpty ? reason : 'Evaluated against "$focusObjective"',
+        activeWindowTitle: activeWindowTitle,
+        openWindowTitles: openWindowTitles,
         timestamp: DateTime.now(),
       );
     } catch (_) {}
 
-    return _heuristicEvaluation(focusObjective, screenDescription, const []);
+    return _heuristicEvaluation(focusObjective, screenDescription, openWindowTitles);
   }
 
   FocusVerificationResult _heuristicEvaluation(
