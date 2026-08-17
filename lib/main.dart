@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:system_tray/system_tray.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:task_monitor/services/window_strut_service.dart';
 
 const double _focusBarHeight = 50;
 const Duration _sessionDuration = Duration(minutes: 25);
@@ -96,13 +97,14 @@ class TaskMonitorApp extends StatelessWidget {
 }
 
 class FocusBar extends StatefulWidget {
-  const FocusBar({super.key});
+  final bool autoStartTimer;
+  const FocusBar({super.key, this.autoStartTimer = true});
 
   @override
   State<FocusBar> createState() => _FocusBarState();
 }
 
-class _FocusBarState extends State<FocusBar> {
+class _FocusBarState extends State<FocusBar> with WindowListener {
   static const _tick = Duration(seconds: 1);
   final TextEditingController _focusController = TextEditingController(
     text: 'What are you focusing on?',
@@ -110,6 +112,8 @@ class _FocusBarState extends State<FocusBar> {
   final TextEditingController _timerController =
       TextEditingController(text: _formatDuration(_sessionDuration));
   final FocusNode _timerFocusNode = FocusNode();
+
+  final WindowStrutService _windowStrutService = WindowStrutService();
 
   Timer? _countdownTimer;
   Timer? _flashTimer;
@@ -137,8 +141,13 @@ class _FocusBarState extends State<FocusBar> {
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
     _focusController.addListener(_handleFocusTextChanged);
-    _startCountdown();
+    if (widget.autoStartTimer) {
+      _startCountdown();
+    } else {
+      _isPaused = true;
+    }
     _loadAlwaysOnTopState();
     unawaited(_initializeSystemTray());
     unawaited(_initDisplaysAndPosition());
@@ -146,6 +155,10 @@ class _FocusBarState extends State<FocusBar> {
 
   @override
   void dispose() {
+    windowManager.removeListener(this);
+    if (Platform.isLinux) {
+      unawaited(_windowStrutService.clearStrut());
+    }
     _focusController.removeListener(_handleFocusTextChanged);
     _countdownTimer?.cancel();
     _flashTimer?.cancel();
@@ -157,6 +170,13 @@ class _FocusBarState extends State<FocusBar> {
     _timerController.dispose();
     _timerFocusNode.dispose();
     super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    if (Platform.isLinux) {
+      unawaited(_windowStrutService.clearStrut());
+    }
   }
 
   Future<void> _initDisplaysAndPosition() async {
@@ -354,7 +374,41 @@ class _FocusBarState extends State<FocusBar> {
     setState(() {
       _isAlwaysOnTop = newValue;
     });
+    if (Platform.isLinux) {
+      if (newValue) {
+        await _applyWindowStrut();
+      } else {
+        await _windowStrutService.clearStrut();
+      }
+    }
     unawaited(_updateSystemTrayState());
+  }
+
+  Future<void> _applyWindowStrut() async {
+    if (!Platform.isLinux || !_isAlwaysOnTop) {
+      return;
+    }
+    try {
+      final display = _displays.isNotEmpty && _currentDisplayIndex < _displays.length
+          ? _displays[_currentDisplayIndex]
+          : await ScreenRetriever.instance.getPrimaryDisplay();
+      final offset = display.visiblePosition ?? Offset.zero;
+      final width = display.visibleSize?.width ?? display.size.width;
+      final visibleHeight = display.visibleSize?.height ?? display.size.height;
+
+      await _windowStrutService.reserveStrut(
+        attachTop: _attachTop,
+        displayX: offset.dx,
+        displayY: offset.dy,
+        displayWidth: width,
+        displayHeight: visibleHeight,
+        barHeight: _focusBarHeight,
+      );
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Error applying window strut: $e');
+      }
+    }
   }
 
   void _handleFocusTextChanged() {
@@ -506,6 +560,9 @@ class _FocusBarState extends State<FocusBar> {
       MenuItemLabel(
         label: 'Quit',
         onClicked: (_) async {
+          if (Platform.isLinux) {
+            await _windowStrutService.clearStrut();
+          }
           await windowManager.close();
         },
         name: 'quit',
@@ -590,6 +647,15 @@ class _FocusBarState extends State<FocusBar> {
     await windowManager.setBounds(rect);
     await windowManager.setSize(Size(width, _focusBarHeight));
     await windowManager.setPosition(Offset(offset.dx, targetTop));
+
+    // Apply workarea reservation strut on Linux
+    if (Platform.isLinux) {
+      if (_isAlwaysOnTop) {
+        unawaited(_applyWindowStrut());
+      } else {
+        unawaited(_windowStrutService.clearStrut());
+      }
+    }
   }
 
   String _buildTrayFocusLabel() {
