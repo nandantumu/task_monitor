@@ -87,6 +87,11 @@ class WindowStrutService {
             }
           }
         }
+      } on ProcessException catch (e) {
+        if (kDebugMode) {
+          debugPrint('WindowStrutService: Process unavailable: $e');
+        }
+        break;
       } catch (e) {
         if (kDebugMode) {
           debugPrint('WindowStrutService: Error finding window ID: $e');

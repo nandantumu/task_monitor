@@ -30,6 +30,8 @@ jobs:
             liblzma-dev \
             libstdc++-12-dev \
             libx11-dev \
+            x11-utils \
+            xvfb \
             dpkg-dev
 
       - name: Setup Flutter
@@ -42,7 +44,7 @@ jobs:
         run: flutter pub get
 
       - name: Run Tests
-        run: flutter test
+        run: xvfb-run --auto-servernum flutter test
 
       - name: Build & Package Linux Artifacts
         run: |
