@@ -127,7 +127,7 @@ Version: ${VERSION}
 Architecture: ${ARCH}
 Maintainer: Nandan Tumu <nandan@nandantumu.com>
 Installed-Size: ${INSTALLED_SIZE}
-Depends: libgtk-3-0, libglib2.0-0
+Depends: libgtk-3-0, libglib2.0-0, libayatana-appindicator3-1
 Section: utils
 Priority: optional
 Homepage: https://github.com/nandantumu/task_monitor

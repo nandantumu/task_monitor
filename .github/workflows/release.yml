@@ -30,6 +30,7 @@ jobs:
             liblzma-dev \
             libstdc++-12-dev \
             libx11-dev \
+            libayatana-appindicator3-dev \
             x11-utils \
             xvfb \
             dpkg-dev
