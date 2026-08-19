@@ -39,6 +39,9 @@ Future<void> _configureDesktopWindow() async {
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.setAsFrameless();
     await windowManager.setAlwaysOnTop(true);
+    if (Platform.isMacOS) {
+      await WindowStrutService().setAlwaysOnTop(true);
+    }
 
     final display = await ScreenRetriever.instance.getPrimaryDisplay();
     final offset = display.visiblePosition ?? Offset.zero;
@@ -154,7 +157,7 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
   @override
   void dispose() {
     windowManager.removeListener(this);
-    if (Platform.isLinux) {
+    if (Platform.isLinux || Platform.isMacOS) {
       unawaited(_windowStrutService.clearStrut());
     }
     _focusController.removeListener(_handleFocusTextChanged);
@@ -172,7 +175,7 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
 
   @override
   void onWindowClose() {
-    if (Platform.isLinux) {
+    if (Platform.isLinux || Platform.isMacOS) {
       unawaited(_windowStrutService.clearStrut());
     }
   }
@@ -366,6 +369,9 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
   Future<void> _toggleAlwaysOnTop() async {
     final newValue = !_isAlwaysOnTop;
     await windowManager.setAlwaysOnTop(newValue);
+    if (Platform.isMacOS) {
+      await _windowStrutService.setAlwaysOnTop(newValue);
+    }
     if (!mounted) {
       return;
     }
@@ -377,7 +383,7 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
   }
 
   Future<void> _applyWindowStrut() async {
-    if (!Platform.isLinux || !_isAlwaysOnTop) {
+    if (!(Platform.isLinux || Platform.isMacOS) || !_isAlwaysOnTop) {
       return;
     }
     try {
@@ -633,8 +639,8 @@ class _FocusBarState extends State<FocusBar> with WindowListener {
     await windowManager.setSize(Size(width, _focusBarHeight));
     await windowManager.setPosition(Offset(posX, targetTop));
 
-    // Apply workarea reservation strut on Linux
-    if (Platform.isLinux) {
+    // Apply workarea reservation strut on Linux and macOS
+    if (Platform.isLinux || Platform.isMacOS) {
       if (_isAlwaysOnTop) {
         unawaited(_applyWindowStrut());
       } else {

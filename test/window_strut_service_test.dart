@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:task_monitor/services/window_strut_service.dart';
 
@@ -82,6 +83,63 @@ void main() {
       expect(calc.strut[3], equals(50));
       expect(calc.strutPartial[10], equals(0));
       expect(calc.strutPartial[11], equals(1079));
+    });
+  });
+
+  group('WindowStrutService method channel delegation', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final service = WindowStrutService();
+    final log = <MethodCall>[];
+
+    setUp(() {
+      log.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('com.example.task_monitor/macos_window'),
+        (MethodCall methodCall) async {
+          log.add(methodCall);
+          switch (methodCall.method) {
+            case 'setAlwaysOnTop':
+            case 'reserveStrut':
+            case 'clearStrut':
+            case 'checkAccessibilityPermission':
+            case 'requestAccessibilityPermission':
+              return true;
+            default:
+              return null;
+          }
+        },
+      );
+    });
+
+    test('setAlwaysOnTop calls native method on macOS', () async {
+      final res = await service.setAlwaysOnTop(true);
+      expect(res, isTrue);
+    });
+
+    test('reserveStrut calls native method on macOS', () async {
+      final res = await service.reserveStrut(
+        attachTop: true,
+        displayX: 0,
+        displayY: 0,
+        displayWidth: 1920,
+        displayHeight: 1080,
+        barHeight: 50,
+      );
+      expect(res, isTrue);
+    });
+
+    test('clearStrut calls native method on macOS', () async {
+      final res = await service.clearStrut();
+      expect(res, isTrue);
+    });
+
+    test('accessibility permission methods execute', () async {
+      final check = await service.checkAccessibilityPermission();
+      expect(check, isTrue);
+
+      final req = await service.requestAccessibilityPermission();
+      expect(req, isTrue);
     });
   });
 }

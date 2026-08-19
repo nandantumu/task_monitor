@@ -1,7 +1,7 @@
 import 'dart:ffi' hide Size;
 import 'dart:io';
-import 'dart:ui' show Size;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 typedef _XOpenDisplayC = Pointer<Void> Function(Pointer<Void> displayName);
 typedef _XOpenDisplayDart = Pointer<Void> Function(Pointer<Void> displayName);
@@ -254,6 +254,48 @@ class WindowStrutService {
     );
   }
 
+  static const MethodChannel _macChannel = MethodChannel('com.example.task_monitor/macos_window');
+
+  /// Configures native window layering (always-on-top level and multi-space pinning).
+  Future<bool> setAlwaysOnTop(bool isAlwaysOnTop) async {
+    if (Platform.isMacOS) {
+      try {
+        final res = await _macChannel.invokeMethod<bool>('setAlwaysOnTop', {
+          'isAlwaysOnTop': isAlwaysOnTop,
+        });
+        return res ?? false;
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('WindowStrutService: Error setting always on top on macOS: $e');
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Checks if macOS accessibility permissions are granted.
+  Future<bool> checkAccessibilityPermission() async {
+    if (!Platform.isMacOS) return true;
+    try {
+      final res = await _macChannel.invokeMethod<bool>('checkAccessibilityPermission');
+      return res ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Requests macOS accessibility permissions (prompts user in System Settings if not granted).
+  Future<bool> requestAccessibilityPermission() async {
+    if (!Platform.isMacOS) return true;
+    try {
+      final res = await _macChannel.invokeMethod<bool>('requestAccessibilityPermission');
+      return res ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Reserves screen space so other applications do not overlap with Task Monitor.
   Future<bool> reserveStrut({
     required bool attachTop,
@@ -264,6 +306,25 @@ class WindowStrutService {
     required double barHeight,
     String? explicitWindowId,
   }) async {
+    if (Platform.isMacOS) {
+      try {
+        final res = await _macChannel.invokeMethod<bool>('reserveStrut', {
+          'attachTop': attachTop,
+          'displayX': displayX,
+          'displayY': displayY,
+          'displayWidth': displayWidth,
+          'displayHeight': displayHeight,
+          'barHeight': barHeight,
+        });
+        return res ?? false;
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('WindowStrutService: Error applying macOS strut: $e');
+        }
+        return false;
+      }
+    }
+
     if (!Platform.isLinux) return false;
 
     final wid = explicitWindowId ?? await findWindowId();
@@ -319,6 +380,18 @@ class WindowStrutService {
 
   /// Clears reserved space and returns window to normal type.
   Future<bool> clearStrut({String? explicitWindowId}) async {
+    if (Platform.isMacOS) {
+      try {
+        final res = await _macChannel.invokeMethod<bool>('clearStrut');
+        return res ?? false;
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('WindowStrutService: Error clearing macOS strut: $e');
+        }
+        return false;
+      }
+    }
+
     if (!Platform.isLinux) return false;
 
     final wid = explicitWindowId ?? await findWindowId();
